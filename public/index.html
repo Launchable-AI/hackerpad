@@ -7,6 +7,12 @@
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <link rel="stylesheet" href="/css/style.css">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
+  <!-- Privacy-friendly analytics by Plausible -->
+  <script async src="https://plausible.io/js/pa-9twbm7AlIx_KFTvYLqmvP.js"></script>
+  <script>
+    window.plausible=window.plausible||function(){(plausible.q=plausible.q||[]).push(arguments)},plausible.init=plausible.init||function(i){plausible.o=i||{}};
+    plausible.init()
+  </script>
 </head>
 <body>
   <div id="app">
@@ -51,6 +57,14 @@
         <button class="tool-btn" data-tool="image" title="Image [I]">
           <span class="icon">⌼</span>
           <span class="label">IMAGE</span>
+        </button>
+        <button class="tool-btn" data-tool="embed" title="Embed URL [U]">
+          <span class="icon">⧉</span>
+          <span class="label">EMBED</span>
+        </button>
+        <button class="tool-btn" data-tool="connect" title="Connect [C]">
+          <span class="icon">→</span>
+          <span class="label">CONNECT</span>
         </button>
       </div>
 
@@ -104,10 +118,10 @@
       </div>
 
       <div class="panel-header">
-        <span class="panel-title">▸ LAYERS</span>
+        <span class="panel-title">▸ COMPONENT TREE</span>
       </div>
-      <div id="layers-list" class="panel-content">
-        <!-- Layers will be populated here -->
+      <div id="layers-list" class="panel-content component-tree">
+        <!-- Component tree will be populated here -->
       </div>
     </div>
 
@@ -117,6 +131,9 @@
 
       <!-- Text input overlay -->
       <textarea id="text-input" placeholder="TYPE HERE..."></textarea>
+
+      <!-- Iframe overlay container -->
+      <div id="iframe-container"></div>
 
       <!-- Coordinates display -->
       <div id="coords">
@@ -135,6 +152,25 @@
     <!-- Hidden file inputs -->
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <input type="file" id="loadInput" accept=".json" style="display: none;">
+
+    <!-- URL Input Dialog -->
+    <div id="url-dialog" class="dialog-overlay">
+      <div class="dialog-box">
+        <div class="dialog-header">
+          <span class="dialog-title">⧉ EMBED URL</span>
+          <button class="dialog-close" id="urlDialogClose">×</button>
+        </div>
+        <div class="dialog-content">
+          <label for="urlInput">ENTER URL:</label>
+          <input type="url" id="urlInput" placeholder="https://example.com">
+          <div class="dialog-note">Note: Some sites may block embedding due to security policies.</div>
+        </div>
+        <div class="dialog-actions">
+          <button class="dialog-btn cancel" id="urlDialogCancel">CANCEL</button>
+          <button class="dialog-btn confirm" id="urlDialogConfirm">EMBED</button>
+        </div>
+      </div>
+    </div>
   </div>
 
   <!-- Scanline overlay -->

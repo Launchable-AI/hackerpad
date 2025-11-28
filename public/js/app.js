@@ -7,6 +7,7 @@ class HackerPad {
     this.canvas = document.getElementById('canvas');
     this.ctx = this.canvas.getContext('2d');
     this.container = document.getElementById('canvas-container');
+    this.iframeContainer = document.getElementById('iframe-container');
 
     // State
     this.objects = [];
@@ -47,6 +48,22 @@ class HackerPad {
     // Object ID counter
     this.objectIdCounter = 0;
 
+    // Iframe elements map (id -> DOM element)
+    this.iframeElements = new Map();
+
+    // Pending embed position (for dialog)
+    this.pendingEmbedPosition = null;
+
+    // Connector state
+    this.connectingFrom = null;  // Source object when drawing connector
+    this.connectingPreview = null;  // Preview endpoint while dragging
+
+    // Resize state
+    this.isResizing = false;
+    this.resizeHandle = null;  // 'nw', 'ne', 'sw', 'se'
+    this.resizeObject = null;
+    this.resizeStart = null;  // Starting dimensions
+
     // Initialize
     this.init();
   }
@@ -57,6 +74,7 @@ class HackerPad {
     this.bindToolbar();
     this.bindProperties();
     this.bindKeyboard();
+    this.bindUrlDialog();
     this.saveState();
     this.render();
 
@@ -103,6 +121,11 @@ class HackerPad {
     this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
     this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
     this.canvas.addEventListener('mouseleave', (e) => this.onMouseUp(e));
+
+    // Prevent middle-click default (auto-scroll)
+    this.canvas.addEventListener('auxclick', (e) => {
+      if (e.button === 1) e.preventDefault();
+    });
 
     // Wheel for zoom
     this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
@@ -204,6 +227,8 @@ class HackerPad {
           case 'e': this.selectTool('ellipse'); break;
           case 't': this.selectTool('text'); break;
           case 'i': this.selectTool('image'); break;
+          case 'u': this.selectTool('embed'); break;
+          case 'c': this.selectTool('connect'); break;
           case 'delete':
           case 'backspace':
             this.deleteSelected();
@@ -252,6 +277,7 @@ class HackerPad {
     if (tool === 'image') {
       document.getElementById('imageInput').click();
     }
+    // Note: embed tool shows dialog on canvas click, not immediately
   }
 
   // ============================================
@@ -269,10 +295,18 @@ class HackerPad {
     this.lastX = screenX;
     this.lastY = screenY;
 
-    // Auto-switch to drag mode when clicking on an image
+    // Middle mouse button always pans
+    if (e.button === 1) {
+      e.preventDefault();
+      this.isPanning = true;
+      this.canvas.style.cursor = 'grabbing';
+      return;
+    }
+
+    // Auto-switch to drag mode when clicking on an image or iframe
     if (this.currentTool !== 'select' && this.currentTool !== 'pan') {
       const clickedObject = this.findObjectAt(x, y);
-      if (clickedObject && clickedObject.type === 'image') {
+      if (clickedObject && (clickedObject.type === 'image' || clickedObject.type === 'iframe')) {
         this.selectTool('select');
         this.handleSelectDown(x, y, e);
         return;
@@ -299,6 +333,12 @@ class HackerPad {
       case 'text':
         this.showTextInput(screenX, screenY, x, y);
         break;
+      case 'embed':
+        this.showUrlDialog(x, y);
+        break;
+      case 'connect':
+        this.handleConnectDown(x, y);
+        break;
     }
   }
 
@@ -312,6 +352,22 @@ class HackerPad {
     document.getElementById('mouseX').textContent = `X: ${Math.round(x)}`;
     document.getElementById('mouseY').textContent = `Y: ${Math.round(y)}`;
 
+    // Update cursor for resize handles
+    if (this.currentTool === 'select' && !this.isDragging && !this.isResizing && !this.isPanning) {
+      const handleHit = this.findResizeHandle(x, y);
+      if (handleHit) {
+        const cursors = {
+          'nw': 'nwse-resize',
+          'se': 'nwse-resize',
+          'ne': 'nesw-resize',
+          'sw': 'nesw-resize'
+        };
+        this.canvas.style.cursor = cursors[handleHit.handle];
+      } else {
+        this.canvas.style.cursor = 'crosshair';
+      }
+    }
+
     if (this.isPanning) {
       const dx = screenX - this.lastX;
       const dy = screenY - this.lastY;
@@ -320,6 +376,11 @@ class HackerPad {
       this.lastX = screenX;
       this.lastY = screenY;
       this.render();
+      return;
+    }
+
+    if (this.isResizing && this.resizeObject) {
+      this.handleResize(x, y);
       return;
     }
 
@@ -345,6 +406,13 @@ class HackerPad {
       this.render();
       this.drawPreview(x, y);
     }
+
+    // Connector preview
+    if (this.connectingFrom) {
+      this.connectingPreview = { x, y };
+      this.render();
+      this.drawConnectorPreview(x, y);
+    }
   }
 
   onMouseUp(e) {
@@ -356,6 +424,18 @@ class HackerPad {
     if (this.isPanning) {
       this.isPanning = false;
       this.canvas.style.cursor = 'crosshair';
+      return;
+    }
+
+    // Finalize connector
+    if (this.connectingFrom) {
+      this.handleConnectUp(x, y);
+      return;
+    }
+
+    // Finalize resize
+    if (this.isResizing) {
+      this.finalizeResize();
       return;
     }
 
@@ -470,6 +550,26 @@ class HackerPad {
   // ============================================
 
   handleSelectDown(x, y, e) {
+    // Check if clicking on a resize handle of a selected object
+    const handleHit = this.findResizeHandle(x, y);
+    if (handleHit) {
+      this.isResizing = true;
+      this.resizeHandle = handleHit.handle;
+      this.resizeObject = handleHit.object;
+
+      const obj = handleHit.object;
+      const bounds = this.getObjectBounds(obj);
+      this.resizeStart = {
+        x: obj.x,
+        y: obj.y,
+        width: bounds.width,
+        height: bounds.height,
+        mouseX: x,
+        mouseY: y
+      };
+      return;
+    }
+
     const clickedObject = this.findObjectAt(x, y);
 
     if (clickedObject) {
@@ -495,6 +595,118 @@ class HackerPad {
 
     this.updateStatus();
     this.updateLayers();
+    this.render();
+  }
+
+  findResizeHandle(x, y) {
+    const handleSize = 12 / this.scale;  // Slightly larger hit area
+
+    for (const obj of this.selectedObjects) {
+      // Only allow resize on objects with width/height
+      if (!this.isResizable(obj)) continue;
+
+      const bounds = this.getObjectBounds(obj);
+      const padding = 5 / this.scale;
+
+      const handles = {
+        'nw': { x: bounds.x - padding, y: bounds.y - padding },
+        'ne': { x: bounds.x + bounds.width + padding, y: bounds.y - padding },
+        'sw': { x: bounds.x - padding, y: bounds.y + bounds.height + padding },
+        'se': { x: bounds.x + bounds.width + padding, y: bounds.y + bounds.height + padding }
+      };
+
+      for (const [handle, pos] of Object.entries(handles)) {
+        if (Math.abs(x - pos.x) < handleSize / 2 && Math.abs(y - pos.y) < handleSize / 2) {
+          return { handle, object: obj };
+        }
+      }
+    }
+    return null;
+  }
+
+  isResizable(obj) {
+    return ['rect', 'image', 'ellipse'].includes(obj.type);
+  }
+
+  handleResize(x, y) {
+    const obj = this.resizeObject;
+    const start = this.resizeStart;
+    const dx = x - start.mouseX;
+    const dy = y - start.mouseY;
+    const minSize = 20;
+
+    // For ellipse, we need to handle radiusX/radiusY instead of width/height
+    if (obj.type === 'ellipse') {
+      this.handleEllipseResize(dx, dy);
+    } else {
+      // rect, image
+      switch (this.resizeHandle) {
+        case 'se':
+          obj.width = Math.max(minSize, start.width + dx);
+          obj.height = Math.max(minSize, start.height + dy);
+          break;
+        case 'sw':
+          const newWidthSW = Math.max(minSize, start.width - dx);
+          obj.x = start.x + (start.width - newWidthSW);
+          obj.width = newWidthSW;
+          obj.height = Math.max(minSize, start.height + dy);
+          break;
+        case 'ne':
+          obj.width = Math.max(minSize, start.width + dx);
+          const newHeightNE = Math.max(minSize, start.height - dy);
+          obj.y = start.y + (start.height - newHeightNE);
+          obj.height = newHeightNE;
+          break;
+        case 'nw':
+          const newWidthNW = Math.max(minSize, start.width - dx);
+          const newHeightNW = Math.max(minSize, start.height - dy);
+          obj.x = start.x + (start.width - newWidthNW);
+          obj.y = start.y + (start.height - newHeightNW);
+          obj.width = newWidthNW;
+          obj.height = newHeightNW;
+          break;
+      }
+    }
+
+    this.render();
+  }
+
+  handleEllipseResize(dx, dy) {
+    const obj = this.resizeObject;
+    const start = this.resizeStart;
+    const minRadius = 10;
+
+    // For ellipse, start.width/height are actually radiusX*2 and radiusY*2
+    // And start.x/y are the center
+    const startRadiusX = start.width / 2;
+    const startRadiusY = start.height / 2;
+
+    switch (this.resizeHandle) {
+      case 'se':
+        obj.radiusX = Math.max(minRadius, startRadiusX + dx / 2);
+        obj.radiusY = Math.max(minRadius, startRadiusY + dy / 2);
+        break;
+      case 'sw':
+        obj.radiusX = Math.max(minRadius, startRadiusX - dx / 2);
+        obj.radiusY = Math.max(minRadius, startRadiusY + dy / 2);
+        break;
+      case 'ne':
+        obj.radiusX = Math.max(minRadius, startRadiusX + dx / 2);
+        obj.radiusY = Math.max(minRadius, startRadiusY - dy / 2);
+        break;
+      case 'nw':
+        obj.radiusX = Math.max(minRadius, startRadiusX - dx / 2);
+        obj.radiusY = Math.max(minRadius, startRadiusY - dy / 2);
+        break;
+    }
+  }
+
+  finalizeResize() {
+    this.isResizing = false;
+    this.resizeHandle = null;
+    this.resizeObject = null;
+    this.resizeStart = null;
+    this.saveState();
     this.render();
   }
 
@@ -545,6 +757,23 @@ class HackerPad {
         return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
                y >= obj.y - margin && y <= obj.y + obj.height + margin;
 
+      case 'iframe':
+        return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
+               y >= obj.y - margin && y <= obj.y + obj.height + margin;
+
+      case 'connector': {
+        // Check if point is near the connector line
+        const connFrom = this.objects.find(o => o.id === obj.fromId);
+        const connTo = this.objects.find(o => o.id === obj.toId);
+        if (!connFrom || !connTo) return false;
+
+        const fromBounds = this.getObjectBounds(connFrom);
+        const toBounds = this.getObjectBounds(connTo);
+        const anchors = this.calculateConnectorAnchors(fromBounds, toBounds);
+
+        return this.pointToLineDistance(x, y, anchors.from.x, anchors.from.y, anchors.to.x, anchors.to.y) < margin;
+      }
+
       default:
         return false;
     }
@@ -592,7 +821,27 @@ class HackerPad {
   deleteSelected() {
     if (this.selectedObjects.length === 0) return;
 
+    // Get IDs of objects being deleted
+    const deletedIds = this.selectedObjects.map(obj => obj.id);
+
+    // Remove iframe DOM elements for selected iframes
+    this.selectedObjects.forEach(obj => {
+      if (obj.type === 'iframe') {
+        this.removeIframeDomElement(obj.id);
+      }
+    });
+
+    // Remove selected objects
     this.objects = this.objects.filter(obj => !this.selectedObjects.includes(obj));
+
+    // Also remove any connectors that reference deleted objects
+    this.objects = this.objects.filter(obj => {
+      if (obj.type === 'connector') {
+        return !deletedIds.includes(obj.fromId) && !deletedIds.includes(obj.toId);
+      }
+      return true;
+    });
+
     this.selectedObjects = [];
     this.saveState();
     this.updateStatus();
@@ -662,6 +911,507 @@ class HackerPad {
 
     textInput.style.display = 'none';
     textInput.value = '';
+  }
+
+  // ============================================
+  // URL DIALOG & IFRAME HANDLING
+  // ============================================
+
+  bindUrlDialog() {
+    const dialog = document.getElementById('url-dialog');
+    const urlInput = document.getElementById('urlInput');
+    const closeBtn = document.getElementById('urlDialogClose');
+    const cancelBtn = document.getElementById('urlDialogCancel');
+    const confirmBtn = document.getElementById('urlDialogConfirm');
+
+    const closeDialog = () => {
+      dialog.classList.remove('visible');
+      urlInput.value = '';
+      this.pendingEmbedPosition = null;
+    };
+
+    closeBtn.addEventListener('click', closeDialog);
+    cancelBtn.addEventListener('click', closeDialog);
+
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) closeDialog();
+    });
+
+    confirmBtn.addEventListener('click', () => {
+      const url = urlInput.value.trim();
+      if (url && this.pendingEmbedPosition) {
+        this.createIframe(url, this.pendingEmbedPosition.x, this.pendingEmbedPosition.y);
+      }
+      closeDialog();
+    });
+
+    urlInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        confirmBtn.click();
+      }
+      if (e.key === 'Escape') {
+        closeDialog();
+      }
+    });
+  }
+
+  showUrlDialog(canvasX, canvasY) {
+    this.pendingEmbedPosition = { x: canvasX, y: canvasY };
+    const dialog = document.getElementById('url-dialog');
+    const urlInput = document.getElementById('urlInput');
+    dialog.classList.add('visible');
+    setTimeout(() => urlInput.focus(), 10);
+  }
+
+  createIframe(url, x, y) {
+    // Ensure URL has protocol
+    if (!url.startsWith('http://') && !url.startsWith('https://')) {
+      url = 'https://' + url;
+    }
+
+    const defaultWidth = 400;
+    const defaultHeight = 300;
+
+    const iframeObj = {
+      type: 'iframe',
+      x: x - defaultWidth / 2,
+      y: y - defaultHeight / 2,
+      width: defaultWidth,
+      height: defaultHeight,
+      url: url,
+      opacity: this.opacity
+    };
+
+    this.addObject(iframeObj);
+    this.createIframeDomElement(iframeObj);
+    this.render();
+  }
+
+  createIframeDomElement(obj) {
+    const wrapper = document.createElement('div');
+    wrapper.className = 'iframe-wrapper loading';
+    wrapper.dataset.objectId = obj.id;
+
+    // Header with URL and controls
+    const header = document.createElement('div');
+    header.className = 'iframe-header';
+    header.innerHTML = `
+      <span class="iframe-url" title="${obj.url}">${obj.url}</span>
+      <div class="iframe-controls">
+        <button class="iframe-control-btn interact-toggle" title="Toggle interaction">⚡</button>
+        <button class="iframe-control-btn refresh-btn" title="Refresh">↻</button>
+      </div>
+    `;
+
+    // Iframe element
+    const iframe = document.createElement('iframe');
+    iframe.src = obj.url;
+    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
+    iframe.addEventListener('load', () => {
+      wrapper.classList.remove('loading');
+    });
+
+    // Resize handles
+    const handles = ['nw', 'ne', 'sw', 'se'].map(pos => {
+      const handle = document.createElement('div');
+      handle.className = `iframe-resize-handle corner ${pos}`;
+      handle.dataset.handle = pos;
+      return handle;
+    });
+
+    wrapper.appendChild(header);
+    wrapper.appendChild(iframe);
+    handles.forEach(h => wrapper.appendChild(h));
+
+    this.iframeContainer.appendChild(wrapper);
+    this.iframeElements.set(obj.id, wrapper);
+
+    // Bind events for this iframe
+    this.bindIframeEvents(wrapper, obj);
+
+    // Position the iframe
+    this.updateIframePosition(obj);
+  }
+
+  bindIframeEvents(wrapper, obj) {
+    const header = wrapper.querySelector('.iframe-header');
+    const interactBtn = wrapper.querySelector('.interact-toggle');
+    const refreshBtn = wrapper.querySelector('.refresh-btn');
+    const iframe = wrapper.querySelector('iframe');
+    const handles = wrapper.querySelectorAll('.iframe-resize-handle');
+
+    // Toggle interaction mode
+    interactBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      wrapper.classList.toggle('interacting');
+      interactBtn.classList.toggle('active');
+    });
+
+    // Refresh iframe
+    refreshBtn.addEventListener('click', (e) => {
+      e.stopPropagation();
+      wrapper.classList.add('loading');
+      iframe.src = iframe.src;
+    });
+
+    // Header click to select
+    header.addEventListener('mousedown', (e) => {
+      if (e.target.closest('.iframe-controls')) return;
+      e.stopPropagation();
+
+      // Select this object
+      if (!e.shiftKey && !this.selectedObjects.includes(obj)) {
+        this.deselectAll();
+      }
+      if (!this.selectedObjects.includes(obj)) {
+        this.selectedObjects.push(obj);
+      }
+
+      // Start dragging
+      this.isDragging = true;
+      const { x, y } = this.screenToCanvas(e.clientX - this.container.getBoundingClientRect().left,
+                                            e.clientY - this.container.getBoundingClientRect().top);
+      this.startX = x;
+      this.startY = y;
+
+      this.selectedObjects.forEach(o => {
+        o._dragStartX = o.x;
+        o._dragStartY = o.y;
+      });
+
+      this.updateStatus();
+      this.updateLayers();
+      this.render();
+
+      const onMouseMove = (e) => {
+        const containerRect = this.container.getBoundingClientRect();
+        const { x, y } = this.screenToCanvas(e.clientX - containerRect.left, e.clientY - containerRect.top);
+        const dx = x - this.startX;
+        const dy = y - this.startY;
+
+        this.selectedObjects.forEach(o => {
+          o.x = (o._dragStartX || o.x) + dx;
+          o.y = (o._dragStartY || o.y) + dy;
+        });
+        this.render();
+      };
+
+      const onMouseUp = () => {
+        this.isDragging = false;
+        this.selectedObjects.forEach(o => {
+          delete o._dragStartX;
+          delete o._dragStartY;
+        });
+        this.saveState();
+        document.removeEventListener('mousemove', onMouseMove);
+        document.removeEventListener('mouseup', onMouseUp);
+      };
+
+      document.addEventListener('mousemove', onMouseMove);
+      document.addEventListener('mouseup', onMouseUp);
+    });
+
+    // Resize handles
+    handles.forEach(handle => {
+      handle.addEventListener('mousedown', (e) => {
+        e.stopPropagation();
+        e.preventDefault();
+
+        const handleType = handle.dataset.handle;
+        const startX = e.clientX;
+        const startY = e.clientY;
+        const startObjX = obj.x;
+        const startObjY = obj.y;
+        const startWidth = obj.width;
+        const startHeight = obj.height;
+
+        const onMouseMove = (e) => {
+          const dx = (e.clientX - startX) / this.scale;
+          const dy = (e.clientY - startY) / this.scale;
+
+          const minSize = 100;
+
+          switch (handleType) {
+            case 'se':
+              obj.width = Math.max(minSize, startWidth + dx);
+              obj.height = Math.max(minSize, startHeight + dy);
+              break;
+            case 'sw':
+              const newWidthSW = Math.max(minSize, startWidth - dx);
+              obj.x = startObjX + (startWidth - newWidthSW);
+              obj.width = newWidthSW;
+              obj.height = Math.max(minSize, startHeight + dy);
+              break;
+            case 'ne':
+              obj.width = Math.max(minSize, startWidth + dx);
+              const newHeightNE = Math.max(minSize, startHeight - dy);
+              obj.y = startObjY + (startHeight - newHeightNE);
+              obj.height = newHeightNE;
+              break;
+            case 'nw':
+              const newWidthNW = Math.max(minSize, startWidth - dx);
+              const newHeightNW = Math.max(minSize, startHeight - dy);
+              obj.x = startObjX + (startWidth - newWidthNW);
+              obj.y = startObjY + (startHeight - newHeightNW);
+              obj.width = newWidthNW;
+              obj.height = newHeightNW;
+              break;
+          }
+
+          this.render();
+        };
+
+        const onMouseUp = () => {
+          this.saveState();
+          document.removeEventListener('mousemove', onMouseMove);
+          document.removeEventListener('mouseup', onMouseUp);
+        };
+
+        document.addEventListener('mousemove', onMouseMove);
+        document.addEventListener('mouseup', onMouseUp);
+      });
+    });
+
+    // Click on wrapper body to select (when not interacting)
+    wrapper.addEventListener('mousedown', (e) => {
+      if (wrapper.classList.contains('interacting')) return;
+      if (e.target.closest('.iframe-header') || e.target.closest('.iframe-resize-handle')) return;
+
+      e.stopPropagation();
+
+      if (!e.shiftKey && !this.selectedObjects.includes(obj)) {
+        this.deselectAll();
+      }
+      if (!this.selectedObjects.includes(obj)) {
+        this.selectedObjects.push(obj);
+      }
+
+      this.updateStatus();
+      this.updateLayers();
+      this.render();
+    });
+  }
+
+  updateIframePosition(obj) {
+    const wrapper = this.iframeElements.get(obj.id);
+    if (!wrapper) return;
+
+    const screen = this.canvasToScreen(obj.x, obj.y);
+    const scaledWidth = obj.width * this.scale;
+    const scaledHeight = obj.height * this.scale;
+    const headerHeight = 28; // Approximate header height
+
+    wrapper.style.left = screen.x + 'px';
+    wrapper.style.top = screen.y + 'px';
+    wrapper.style.width = scaledWidth + 'px';
+    wrapper.style.height = (scaledHeight + headerHeight) + 'px';
+
+    // Update iframe size (minus header)
+    const iframe = wrapper.querySelector('iframe');
+    if (iframe) {
+      iframe.style.height = scaledHeight + 'px';
+    }
+
+    // Update selection state
+    if (this.selectedObjects.includes(obj)) {
+      wrapper.classList.add('selected');
+    } else {
+      wrapper.classList.remove('selected');
+    }
+  }
+
+  updateAllIframePositions() {
+    this.objects.forEach(obj => {
+      if (obj.type === 'iframe') {
+        this.updateIframePosition(obj);
+      }
+    });
+  }
+
+  removeIframeDomElement(id) {
+    const wrapper = this.iframeElements.get(id);
+    if (wrapper) {
+      wrapper.remove();
+      this.iframeElements.delete(id);
+    }
+  }
+
+  // ============================================
+  // CONNECTOR TOOL
+  // ============================================
+
+  handleConnectDown(x, y) {
+    // Find object under cursor to start connection
+    const sourceObj = this.findObjectAt(x, y);
+    if (sourceObj && sourceObj.type !== 'connector') {
+      this.connectingFrom = sourceObj;
+      this.connectingPreview = { x, y };
+    }
+  }
+
+  handleConnectUp(x, y) {
+    if (!this.connectingFrom) return;
+
+    // Find target object
+    const targetObj = this.findObjectAt(x, y);
+
+    if (targetObj && targetObj !== this.connectingFrom && targetObj.type !== 'connector') {
+      // Create connector between two objects
+      this.addObject({
+        type: 'connector',
+        fromId: this.connectingFrom.id,
+        toId: targetObj.id,
+        strokeColor: this.strokeColor,
+        strokeWidth: this.strokeWidth,
+        opacity: this.opacity
+      });
+    }
+
+    // Reset connector state
+    this.connectingFrom = null;
+    this.connectingPreview = null;
+    this.render();
+  }
+
+  drawConnectorPreview(toX, toY) {
+    if (!this.connectingFrom) return;
+
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(this.offsetX, this.offsetY);
+    ctx.scale(this.scale, this.scale);
+
+    // Get source object center
+    const fromBounds = this.getObjectBounds(this.connectingFrom);
+    const fromCenter = {
+      x: fromBounds.x + fromBounds.width / 2,
+      y: fromBounds.y + fromBounds.height / 2
+    };
+
+    // Check if hovering over a valid target
+    const targetObj = this.findObjectAt(toX, toY);
+    let toPoint = { x: toX, y: toY };
+
+    if (targetObj && targetObj !== this.connectingFrom && targetObj.type !== 'connector') {
+      // Snap to target center
+      const toBounds = this.getObjectBounds(targetObj);
+      toPoint = {
+        x: toBounds.x + toBounds.width / 2,
+        y: toBounds.y + toBounds.height / 2
+      };
+
+      // Highlight target
+      ctx.strokeStyle = '#00ff9d';
+      ctx.lineWidth = 2 / this.scale;
+      ctx.setLineDash([5 / this.scale, 5 / this.scale]);
+      ctx.strokeRect(toBounds.x - 5, toBounds.y - 5, toBounds.width + 10, toBounds.height + 10);
+      ctx.setLineDash([]);
+    }
+
+    // Calculate smart anchor points
+    const anchors = this.calculateConnectorAnchors(fromBounds, { x: toPoint.x, y: toPoint.y, width: 0, height: 0 });
+
+    // Draw preview line with arrow
+    ctx.strokeStyle = this.strokeColor;
+    ctx.lineWidth = this.strokeWidth;
+    ctx.globalAlpha = 0.6;
+    ctx.setLineDash([5, 5]);
+
+    this.drawArrowLine(ctx, anchors.from.x, anchors.from.y, toPoint.x, toPoint.y);
+
+    ctx.restore();
+  }
+
+  calculateConnectorAnchors(fromBounds, toBounds) {
+    // Calculate center points
+    const fromCenter = {
+      x: fromBounds.x + fromBounds.width / 2,
+      y: fromBounds.y + fromBounds.height / 2
+    };
+    const toCenter = {
+      x: toBounds.x + toBounds.width / 2,
+      y: toBounds.y + toBounds.height / 2
+    };
+
+    // Determine best exit/entry points based on relative positions
+    const dx = toCenter.x - fromCenter.x;
+    const dy = toCenter.y - fromCenter.y;
+
+    let fromAnchor, toAnchor;
+
+    // From anchor - exit point on source object
+    if (Math.abs(dx) > Math.abs(dy)) {
+      // Horizontal connection
+      if (dx > 0) {
+        fromAnchor = { x: fromBounds.x + fromBounds.width, y: fromCenter.y }; // Right
+        toAnchor = { x: toBounds.x, y: toCenter.y }; // Left
+      } else {
+        fromAnchor = { x: fromBounds.x, y: fromCenter.y }; // Left
+        toAnchor = { x: toBounds.x + toBounds.width, y: toCenter.y }; // Right
+      }
+    } else {
+      // Vertical connection
+      if (dy > 0) {
+        fromAnchor = { x: fromCenter.x, y: fromBounds.y + fromBounds.height }; // Bottom
+        toAnchor = { x: toCenter.x, y: toBounds.y }; // Top
+      } else {
+        fromAnchor = { x: fromCenter.x, y: fromBounds.y }; // Top
+        toAnchor = { x: toCenter.x, y: toBounds.y + toBounds.height }; // Bottom
+      }
+    }
+
+    return { from: fromAnchor, to: toAnchor };
+  }
+
+  drawArrowLine(ctx, x1, y1, x2, y2) {
+    const headLength = 12;
+    const angle = Math.atan2(y2 - y1, x2 - x1);
+
+    // Draw line
+    ctx.beginPath();
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
+    ctx.stroke();
+
+    // Draw arrowhead
+    ctx.setLineDash([]);
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(
+      x2 - headLength * Math.cos(angle - Math.PI / 6),
+      y2 - headLength * Math.sin(angle - Math.PI / 6)
+    );
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(
+      x2 - headLength * Math.cos(angle + Math.PI / 6),
+      y2 - headLength * Math.sin(angle + Math.PI / 6)
+    );
+    ctx.stroke();
+  }
+
+  drawConnector(obj) {
+    // Find connected objects
+    const fromObj = this.objects.find(o => o.id === obj.fromId);
+    const toObj = this.objects.find(o => o.id === obj.toId);
+
+    if (!fromObj || !toObj) {
+      // Connected object was deleted - draw as orphaned
+      return;
+    }
+
+    const ctx = this.ctx;
+    const fromBounds = this.getObjectBounds(fromObj);
+    const toBounds = this.getObjectBounds(toObj);
+
+    // Calculate smart anchor points
+    const anchors = this.calculateConnectorAnchors(fromBounds, toBounds);
+
+    ctx.strokeStyle = obj.strokeColor;
+    ctx.lineWidth = obj.strokeWidth;
+    ctx.lineCap = 'round';
+
+    this.drawArrowLine(ctx, anchors.from.x, anchors.from.y, anchors.to.x, anchors.to.y);
   }
 
   // ============================================
@@ -747,6 +1497,9 @@ class HackerPad {
     this.selectedObjects.forEach(obj => this.drawSelectionIndicator(obj));
 
     ctx.restore();
+
+    // Update iframe positions to sync with canvas transforms
+    this.updateAllIframePositions();
   }
 
   drawObject(obj) {
@@ -772,6 +1525,13 @@ class HackerPad {
         break;
       case 'image':
         this.drawImage(obj);
+        break;
+      case 'iframe':
+        // Iframes are rendered as DOM elements, but draw placeholder on canvas for selection
+        this.drawIframePlaceholder(obj);
+        break;
+      case 'connector':
+        this.drawConnector(obj);
         break;
     }
 
@@ -857,6 +1617,16 @@ class HackerPad {
     }
   }
 
+  drawIframePlaceholder(obj) {
+    // Draw a subtle placeholder rectangle on canvas for iframe (actual iframe is DOM overlay)
+    const ctx = this.ctx;
+    ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([5, 5]);
+    ctx.strokeRect(obj.x, obj.y, obj.width, obj.height);
+    ctx.setLineDash([]);
+  }
+
   drawSelectionIndicator(obj) {
     const ctx = this.ctx;
     ctx.save();
@@ -932,6 +1702,27 @@ class HackerPad {
 
       case 'image':
         return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+
+      case 'iframe':
+        return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+
+      case 'connector': {
+        // Calculate bounds from connected objects
+        const connFromObj = this.objects.find(o => o.id === obj.fromId);
+        const connToObj = this.objects.find(o => o.id === obj.toId);
+        if (!connFromObj || !connToObj) return { x: 0, y: 0, width: 0, height: 0 };
+
+        const connFromBounds = this.getObjectBounds(connFromObj);
+        const connToBounds = this.getObjectBounds(connToObj);
+        const connAnchors = this.calculateConnectorAnchors(connFromBounds, connToBounds);
+
+        const connMinX = Math.min(connAnchors.from.x, connAnchors.to.x);
+        const connMinY = Math.min(connAnchors.from.y, connAnchors.to.y);
+        const connMaxX = Math.max(connAnchors.from.x, connAnchors.to.x);
+        const connMaxY = Math.max(connAnchors.from.y, connAnchors.to.y);
+
+        return { x: connMinX, y: connMinY, width: connMaxX - connMinX || 10, height: connMaxY - connMinY || 10 };
+      }
 
       default:
         return { x: obj.x || 0, y: obj.y || 0, width: 100, height: 100 };
@@ -1025,7 +1816,7 @@ class HackerPad {
     // Remove any future states if we're not at the end
     this.history = this.history.slice(0, this.historyIndex + 1);
 
-    // Clone objects (excluding image elements)
+    // Clone objects (excluding transient DOM references)
     const state = this.objects.map(obj => {
       const clone = { ...obj };
       if (clone.type === 'image') {
@@ -1034,6 +1825,7 @@ class HackerPad {
       if (clone.type === 'path') {
         clone.points = [...obj.points];
       }
+      // iframes are saved with their url, x, y, width, height - no DOM refs to remove
       return clone;
     });
 
@@ -1064,7 +1856,13 @@ class HackerPad {
   restoreState() {
     const state = JSON.parse(this.history[this.historyIndex]);
 
-    // Restore objects and reload images
+    // Clear existing iframe DOM elements
+    this.iframeElements.forEach((wrapper, id) => {
+      wrapper.remove();
+    });
+    this.iframeElements.clear();
+
+    // Restore objects and reload images/iframes
     this.objects = state.map(obj => {
       if (obj.type === 'image' && obj.src) {
         const img = new Image();
@@ -1072,6 +1870,13 @@ class HackerPad {
         obj.imageElement = img;
       }
       return obj;
+    });
+
+    // Recreate iframe DOM elements
+    this.objects.forEach(obj => {
+      if (obj.type === 'iframe') {
+        this.createIframeDomElement(obj);
+      }
     });
 
     this.selectedObjects = [];
@@ -1127,6 +1932,12 @@ class HackerPad {
   loadData(data) {
     if (!data.objects) return;
 
+    // Clear existing iframe DOM elements
+    this.iframeElements.forEach((wrapper, id) => {
+      wrapper.remove();
+    });
+    this.iframeElements.clear();
+
     this.objects = data.objects.map(obj => {
       if (obj.type === 'image' && obj.src) {
         const img = new Image();
@@ -1135,6 +1946,13 @@ class HackerPad {
         obj.imageElement = img;
       }
       return obj;
+    });
+
+    // Recreate iframe DOM elements
+    this.objects.forEach(obj => {
+      if (obj.type === 'iframe') {
+        this.createIframeDomElement(obj);
+      }
     });
 
     this.selectedObjects = [];
@@ -1150,6 +1968,12 @@ class HackerPad {
     if (this.objects.length === 0) return;
 
     if (confirm('⚠ CLEAR ALL OBJECTS?')) {
+      // Clear iframe DOM elements
+      this.iframeElements.forEach((wrapper, id) => {
+        wrapper.remove();
+      });
+      this.iframeElements.clear();
+
       this.objects = [];
       this.selectedObjects = [];
       this.saveState();
@@ -1179,8 +2003,15 @@ class HackerPad {
       rect: '▢',
       ellipse: '◯',
       text: 'A',
-      image: '⌼'
+      image: '⌼',
+      iframe: '⧉',
+      connector: '→'
     };
+
+    if (this.objects.length === 0) {
+      layersList.innerHTML = '<div class="component-tree-empty">No objects yet</div>';
+      return;
+    }
 
     [...this.objects].reverse().forEach((obj, index) => {
       const item = document.createElement('div');
@@ -1189,18 +2020,106 @@ class HackerPad {
         item.classList.add('selected');
       }
 
+      // Check if object is off-screen
+      const bounds = this.getObjectBounds(obj);
+      const screenPos = this.canvasToScreen(bounds.x, bounds.y);
+      const screenEndPos = this.canvasToScreen(bounds.x + bounds.width, bounds.y + bounds.height);
+      const isOffscreen = screenEndPos.x < 0 || screenPos.x > this.canvas.width ||
+                          screenEndPos.y < 0 || screenPos.y > this.canvas.height;
+
+      if (isOffscreen) {
+        item.classList.add('offscreen');
+      }
+
+      // Build details based on object type
+      let details = '';
+      const posInfo = `X: ${Math.round(bounds.x)}, Y: ${Math.round(bounds.y)}`;
+      const sizeInfo = bounds.width && bounds.height ?
+        `${Math.round(bounds.width)} × ${Math.round(bounds.height)}` : '';
+
+      switch (obj.type) {
+        case 'iframe':
+          details = `
+            <span class="layer-url" title="${obj.url}">${obj.url}</span>
+            <span class="layer-pos">${posInfo} · ${sizeInfo}</span>
+          `;
+          break;
+        case 'text':
+          const textPreview = obj.text.length > 20 ? obj.text.substring(0, 20) + '...' : obj.text;
+          details = `
+            <span class="layer-text">"${textPreview}"</span>
+            <span class="layer-pos">${posInfo}</span>
+          `;
+          break;
+        case 'image':
+          details = `<span class="layer-pos">${posInfo} · ${sizeInfo}</span>`;
+          break;
+        case 'connector': {
+          const connFromObj = this.objects.find(o => o.id === obj.fromId);
+          const connToObj = this.objects.find(o => o.id === obj.toId);
+          const fromName = connFromObj ? `${connFromObj.type.toUpperCase()} ${connFromObj.id}` : 'deleted';
+          const toName = connToObj ? `${connToObj.type.toUpperCase()} ${connToObj.id}` : 'deleted';
+          details = `<span class="layer-pos">${fromName} → ${toName}</span>`;
+          break;
+        }
+        default:
+          details = `<span class="layer-pos">${posInfo}${sizeInfo ? ' · ' + sizeInfo : ''}</span>`;
+      }
+
       item.innerHTML = `
-        <span class="layer-icon">${icons[obj.type] || '?'}</span>
-        <span class="layer-name">${obj.type.toUpperCase()} ${obj.id}</span>
+        <div class="layer-header">
+          <span class="layer-icon">${icons[obj.type] || '?'}</span>
+          <span class="layer-name">${obj.type.toUpperCase()} ${obj.id}</span>
+          <div class="layer-actions">
+            <button class="layer-action-btn focus-btn" title="Focus on object">◎</button>
+            <button class="layer-action-btn delete-btn" title="Delete">×</button>
+          </div>
+        </div>
+        <div class="layer-details">${details}</div>
       `;
 
+      // Click to select and focus
       item.addEventListener('click', (e) => {
-        if (!e.shiftKey) {
-          this.deselectAll();
+        if (e.target.closest('.layer-actions')) return;
+
+        if (e.shiftKey) {
+          // Shift+click: just add to selection, don't pan
+          if (!this.selectedObjects.includes(obj)) {
+            this.selectedObjects.push(obj);
+          }
+          this.updateStatus();
+          this.updateLayers();
+          this.render();
+        } else {
+          // Regular click: focus and select
+          this.focusOnObject(obj);
         }
-        if (!this.selectedObjects.includes(obj)) {
-          this.selectedObjects.push(obj);
+      });
+
+      // Focus button - pan to object
+      const focusBtn = item.querySelector('.focus-btn');
+      focusBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.focusOnObject(obj);
+      });
+
+      // Delete button
+      const deleteBtn = item.querySelector('.delete-btn');
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        if (obj.type === 'iframe') {
+          this.removeIframeDomElement(obj.id);
         }
+        this.objects = this.objects.filter(o => o !== obj);
+        // Also remove connectors referencing this object
+        this.objects = this.objects.filter(o => {
+          if (o.type === 'connector') {
+            return o.fromId !== obj.id && o.toId !== obj.id;
+          }
+          return true;
+        });
+        this.selectedObjects = this.selectedObjects.filter(o => o !== obj);
+        this.saveState();
         this.updateStatus();
         this.updateLayers();
         this.render();
@@ -1208,6 +2127,24 @@ class HackerPad {
 
       layersList.appendChild(item);
     });
+  }
+
+  focusOnObject(obj) {
+    const bounds = this.getObjectBounds(obj);
+    const centerX = bounds.x + bounds.width / 2;
+    const centerY = bounds.y + bounds.height / 2;
+
+    // Calculate offset to center the object on screen
+    this.offsetX = this.canvas.width / 2 - centerX * this.scale;
+    this.offsetY = this.canvas.height / 2 - centerY * this.scale;
+
+    // Select the object
+    this.deselectAll();
+    this.selectedObjects.push(obj);
+
+    this.updateStatus();
+    this.updateLayers();
+    this.render();
   }
 }
 
