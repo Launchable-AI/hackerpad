@@ -518,6 +518,16 @@ input[type="range"]::-webkit-slider-thumb {
   color: rgba(0, 255, 157, 0.4);
 }
 
+#text-input.editing-existing {
+  background: rgba(10, 10, 15, 0.5);
+  border: 2px solid var(--neon-cyan);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+  padding: 4px;
+  min-width: 50px;
+  min-height: 20px;
+  caret-color: var(--neon-green);
+}
+
 /* Coordinates display */
 #coords {
   position: absolute;

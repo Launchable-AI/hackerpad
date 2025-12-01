@@ -140,11 +140,15 @@ class HackerPad {
       if (e.key === 'Escape') {
         textInput.style.display = 'none';
         textInput.value = '';
+        textInput.classList.remove('editing-existing');
         this.editingTextObject = null;
+        this.render();  // Re-render to show the original text
       }
+      // Enter confirms and switches to select tool, Shift+Enter adds newline
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
         this.finalizeText();
+        this.selectTool('select');
       }
     });
 
@@ -224,7 +228,7 @@ class HackerPad {
       // Tool shortcuts
       if (!e.ctrlKey && !e.metaKey) {
         switch (e.key.toLowerCase()) {
-          case 'v': this.selectTool('select'); break;
+          case 's': this.selectTool('select'); break;
           case 'h': this.selectTool('pan'); break;
           case 'd': this.selectTool('draw'); break;
           case 'l': this.selectTool('line'); break;
@@ -288,6 +292,16 @@ class HackerPad {
   // ============================================
 
   onMouseDown(e) {
+    // Finalize any active text input before handling canvas click
+    const textInput = document.getElementById('text-input');
+    if (textInput.style.display === 'block') {
+      this.finalizeText();
+      // If clicking elsewhere (not creating new text), stop here
+      if (this.currentTool !== 'text') {
+        return;
+      }
+    }
+
     const rect = this.canvas.getBoundingClientRect();
     const screenX = e.clientX - rect.left;
     const screenY = e.clientY - rect.top;
@@ -578,7 +592,8 @@ class HackerPad {
         width: bounds.width,
         height: bounds.height,
         mouseX: x,
-        mouseY: y
+        mouseY: y,
+        fontSize: obj.fontSize || null  // For text resizing
       };
       return;
     }
@@ -638,7 +653,7 @@ class HackerPad {
   }
 
   isResizable(obj) {
-    return ['rect', 'image', 'ellipse'].includes(obj.type);
+    return ['rect', 'image', 'ellipse', 'text'].includes(obj.type);
   }
 
   handleResize(x, y) {
@@ -648,9 +663,11 @@ class HackerPad {
     const dy = y - start.mouseY;
     const minSize = 20;
 
-    // For ellipse, we need to handle radiusX/radiusY instead of width/height
+    // Handle different object types
     if (obj.type === 'ellipse') {
       this.handleEllipseResize(dx, dy);
+    } else if (obj.type === 'text') {
+      this.handleTextResize(dx, dy);
     } else {
       // rect, image
       switch (this.resizeHandle) {
@@ -714,6 +731,39 @@ class HackerPad {
     }
   }
 
+  handleTextResize(dx, dy) {
+    const obj = this.resizeObject;
+    const start = this.resizeStart;
+    const minFontSize = 8;
+    const maxFontSize = 200;
+
+    // Calculate scale factor based on the corner being dragged
+    // Use the larger of dx or dy for proportional scaling
+    let scale;
+    switch (this.resizeHandle) {
+      case 'se':
+        scale = Math.max(1 + dx / start.width, 1 + dy / start.height);
+        break;
+      case 'sw':
+        scale = Math.max(1 - dx / start.width, 1 + dy / start.height);
+        break;
+      case 'ne':
+        scale = Math.max(1 + dx / start.width, 1 - dy / start.height);
+        break;
+      case 'nw':
+        scale = Math.max(1 - dx / start.width, 1 - dy / start.height);
+        break;
+    }
+
+    // Apply scale to fontSize
+    const newFontSize = Math.round(start.fontSize * scale);
+    obj.fontSize = Math.max(minFontSize, Math.min(maxFontSize, newFontSize));
+
+    // Update the font size input in the properties panel
+    document.getElementById('fontSize').value = obj.fontSize;
+    this.fontSize = obj.fontSize;
+  }
+
   finalizeResize() {
     this.isResizing = false;
     this.resizeHandle = null;
@@ -761,10 +811,13 @@ class HackerPad {
         return false;
 
       case 'text':
-        const textWidth = obj.text.length * obj.fontSize * 0.6;
-        const textHeight = obj.fontSize;
+        const lines = obj.text.split('\n');
+        const maxLineLength = Math.max(...lines.map(l => l.length));
+        const textWidth = maxLineLength * obj.fontSize * 0.6;
+        const lineHeight = obj.fontSize * 1.2;
+        const textHeight = lines.length * lineHeight;
         return x >= obj.x - margin && x <= obj.x + textWidth + margin &&
-               y >= obj.y - textHeight - margin && y <= obj.y + margin;
+               y >= obj.y - margin && y <= obj.y + textHeight + margin;
 
       case 'image':
         return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
@@ -909,13 +962,20 @@ class HackerPad {
     textInput.dataset.canvasX = obj.x;
     textInput.dataset.canvasY = obj.y;
 
+    // Add editing class for in-place styling
+    textInput.classList.add('editing-existing');
+
     // Store reference to the object being edited
     this.editingTextObject = obj;
 
-    // Small delay to ensure focus works, then select all text
+    // Re-render to hide the original text on canvas
+    this.render();
+
+    // Small delay to ensure focus works, then position cursor at end
     setTimeout(() => {
       textInput.focus();
-      textInput.select();
+      // Move cursor to end instead of selecting all
+      textInput.selectionStart = textInput.selectionEnd = textInput.value.length;
     }, 10);
   }
 
@@ -953,6 +1013,7 @@ class HackerPad {
 
     textInput.style.display = 'none';
     textInput.value = '';
+    textInput.classList.remove('editing-existing');
   }
 
   // ============================================
@@ -1309,6 +1370,9 @@ class HackerPad {
   }
 
   drawText(obj) {
+    // Don't draw text that's currently being edited
+    if (this.editingTextObject === obj) return;
+
     const ctx = this.ctx;
     ctx.font = `${obj.fontSize}px 'Share Tech Mono', monospace`;
     ctx.fillStyle = obj.strokeColor;
@@ -1317,7 +1381,14 @@ class HackerPad {
     // Draw with slight glow effect
     ctx.shadowColor = obj.strokeColor;
     ctx.shadowBlur = 4;
-    ctx.fillText(obj.text, obj.x, obj.y);
+
+    // Handle multiline text
+    const lines = obj.text.split('\n');
+    const lineHeight = obj.fontSize * 1.2;
+    lines.forEach((line, index) => {
+      ctx.fillText(line, obj.x, obj.y + index * lineHeight);
+    });
+
     ctx.shadowBlur = 0;
   }
 
@@ -1329,6 +1400,9 @@ class HackerPad {
   }
 
   drawSelectionIndicator(obj) {
+    // Don't draw selection indicator for text being edited (textarea has its own border)
+    if (this.editingTextObject === obj) return;
+
     const ctx = this.ctx;
     ctx.save();
 
@@ -1398,8 +1472,11 @@ class HackerPad {
         return { x: minX, y: minY, width: maxX - minX, height: maxY - minY };
 
       case 'text':
-        const textWidth = obj.text.length * obj.fontSize * 0.6;
-        return { x: obj.x, y: obj.y, width: textWidth, height: obj.fontSize };
+        const textLines = obj.text.split('\n');
+        const maxLen = Math.max(...textLines.map(l => l.length));
+        const tWidth = maxLen * obj.fontSize * 0.6;
+        const tHeight = textLines.length * obj.fontSize * 1.2;
+        return { x: obj.x, y: obj.y, width: tWidth, height: tHeight };
 
       case 'image':
         return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
@@ -2176,6 +2253,12 @@ class HackerPad {
     this.updateStatus();
     this.updateLayers();
     this.render();
+
+    // If it's a text object, activate edit mode
+    if (obj.type === 'text') {
+      const screenPos = this.canvasToScreen(obj.x, obj.y);
+      this.editTextObject(obj, screenPos.x, screenPos.y);
+    }
   }
 }
 
