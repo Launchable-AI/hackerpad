@@ -29,42 +29,47 @@
         <button class="tool-btn active" data-tool="select" title="Select [V]">
           <span class="icon">⊡</span>
           <span class="label">SELECT</span>
+          <span class="hotkey">V</span>
         </button>
         <button class="tool-btn" data-tool="pan" title="Pan [H]">
           <span class="icon">✥</span>
           <span class="label">PAN</span>
+          <span class="hotkey">H</span>
         </button>
         <button class="tool-btn" data-tool="draw" title="Draw [D]">
           <span class="icon">✎</span>
           <span class="label">DRAW</span>
+          <span class="hotkey">D</span>
         </button>
         <button class="tool-btn" data-tool="line" title="Line [L]">
           <span class="icon">╱</span>
           <span class="label">LINE</span>
+          <span class="hotkey">L</span>
         </button>
         <button class="tool-btn" data-tool="rect" title="Rectangle [R]">
           <span class="icon">▢</span>
           <span class="label">RECT</span>
+          <span class="hotkey">R</span>
         </button>
         <button class="tool-btn" data-tool="ellipse" title="Ellipse [E]">
           <span class="icon">◯</span>
           <span class="label">ELLIPSE</span>
+          <span class="hotkey">E</span>
         </button>
         <button class="tool-btn" data-tool="text" title="Text [T]">
           <span class="icon">A</span>
           <span class="label">TEXT</span>
+          <span class="hotkey">T</span>
         </button>
         <button class="tool-btn" data-tool="image" title="Image [I]">
           <span class="icon">⌼</span>
           <span class="label">IMAGE</span>
-        </button>
-        <button class="tool-btn" data-tool="embed" title="Embed URL [U]">
-          <span class="icon">⧉</span>
-          <span class="label">EMBED</span>
+          <span class="hotkey">I</span>
         </button>
         <button class="tool-btn" data-tool="connect" title="Connect [C]">
           <span class="icon">→</span>
           <span class="label">CONNECT</span>
+          <span class="hotkey">C</span>
         </button>
       </div>
 
@@ -72,8 +77,9 @@
         <button class="action-btn" id="undoBtn" title="Undo [Ctrl+Z]">↶</button>
         <button class="action-btn" id="redoBtn" title="Redo [Ctrl+Y]">↷</button>
         <button class="action-btn" id="clearBtn" title="Clear All">⌧</button>
-        <button class="action-btn" id="saveBtn" title="Save [Ctrl+S]">⬇</button>
-        <button class="action-btn" id="loadBtn" title="Load">⬆</button>
+        <button class="action-btn" id="projectsBtn" title="Projects">☰</button>
+        <button class="action-btn" id="saveBtn" title="Export File [Ctrl+S]">⬇</button>
+        <button class="action-btn" id="loadBtn" title="Import File">⬆</button>
       </div>
 
       <div class="toolbar-section zoom">
@@ -108,6 +114,26 @@
           </div>
         </div>
         <div class="property-group">
+          <label>COLOR PALETTE</label>
+          <div class="palette-target-row">
+            <button class="palette-target active" data-target="stroke">STROKE</button>
+            <button class="palette-target" data-target="fill">FILL</button>
+          </div>
+          <div class="color-palette" id="colorPalette">
+            <button class="palette-slot empty" data-slot="0"></button>
+            <button class="palette-slot empty" data-slot="1"></button>
+            <button class="palette-slot empty" data-slot="2"></button>
+            <button class="palette-slot empty" data-slot="3"></button>
+            <button class="palette-slot empty" data-slot="4"></button>
+            <button class="palette-slot empty" data-slot="5"></button>
+            <button class="palette-slot empty" data-slot="6"></button>
+            <button class="palette-slot empty" data-slot="7"></button>
+            <button class="palette-slot empty" data-slot="8"></button>
+            <button class="palette-slot empty" data-slot="9"></button>
+          </div>
+          <div class="palette-hint">Click: use · Right-click: save · Middle: clear</div>
+        </div>
+        <div class="property-group">
           <label>FONT SIZE</label>
           <input type="number" id="fontSize" value="24" min="8" max="200">
         </div>
@@ -132,9 +158,6 @@
       <!-- Text input overlay -->
       <textarea id="text-input" placeholder="TYPE HERE..."></textarea>
 
-      <!-- Iframe overlay container -->
-      <div id="iframe-container"></div>
-
       <!-- Coordinates display -->
       <div id="coords">
         <span id="mouseX">X: 0</span>
@@ -153,21 +176,85 @@
     <input type="file" id="imageInput" accept="image/*" style="display: none;">
     <input type="file" id="loadInput" accept=".json" style="display: none;">
 
-    <!-- URL Input Dialog -->
-    <div id="url-dialog" class="dialog-overlay">
-      <div class="dialog-box">
+    <!-- Radial Menu -->
+    <div id="radial-menu" class="radial-menu">
+      <div class="radial-center">
+        <span class="radial-center-icon">⬡</span>
+      </div>
+      <div class="radial-items">
+        <button class="radial-item" data-tool="select" data-angle="0">
+          <span class="radial-icon">⊡</span>
+          <span class="radial-label">SELECT</span>
+          <span class="radial-key">V</span>
+        </button>
+        <button class="radial-item" data-tool="pan" data-angle="40">
+          <span class="radial-icon">✥</span>
+          <span class="radial-label">PAN</span>
+          <span class="radial-key">H</span>
+        </button>
+        <button class="radial-item" data-tool="draw" data-angle="80">
+          <span class="radial-icon">✎</span>
+          <span class="radial-label">DRAW</span>
+          <span class="radial-key">D</span>
+        </button>
+        <button class="radial-item" data-tool="line" data-angle="120">
+          <span class="radial-icon">╱</span>
+          <span class="radial-label">LINE</span>
+          <span class="radial-key">L</span>
+        </button>
+        <button class="radial-item" data-tool="rect" data-angle="160">
+          <span class="radial-icon">▢</span>
+          <span class="radial-label">RECT</span>
+          <span class="radial-key">R</span>
+        </button>
+        <button class="radial-item" data-tool="ellipse" data-angle="200">
+          <span class="radial-icon">◯</span>
+          <span class="radial-label">ELLIPSE</span>
+          <span class="radial-key">E</span>
+        </button>
+        <button class="radial-item" data-tool="text" data-angle="240">
+          <span class="radial-icon">A</span>
+          <span class="radial-label">TEXT</span>
+          <span class="radial-key">T</span>
+        </button>
+        <button class="radial-item" data-tool="image" data-angle="280">
+          <span class="radial-icon">⌼</span>
+          <span class="radial-label">IMAGE</span>
+          <span class="radial-key">I</span>
+        </button>
+        <button class="radial-item" data-tool="connect" data-angle="320">
+          <span class="radial-icon">→</span>
+          <span class="radial-label">CONNECT</span>
+          <span class="radial-key">C</span>
+        </button>
+      </div>
+      <svg class="radial-ring" viewBox="0 0 340 340">
+        <circle cx="170" cy="170" r="120" class="radial-ring-bg"/>
+        <circle cx="170" cy="170" r="120" class="radial-ring-glow"/>
+      </svg>
+    </div>
+
+    <!-- Projects Dialog -->
+    <div id="projects-dialog" class="dialog-overlay">
+      <div class="dialog-box projects-dialog-box">
         <div class="dialog-header">
-          <span class="dialog-title">⧉ EMBED URL</span>
-          <button class="dialog-close" id="urlDialogClose">×</button>
+          <span class="dialog-title">☰ PROJECTS</span>
+          <button class="dialog-close" id="projectsDialogClose">×</button>
         </div>
         <div class="dialog-content">
-          <label for="urlInput">ENTER URL:</label>
-          <input type="url" id="urlInput" placeholder="https://example.com">
-          <div class="dialog-note">Note: Some sites may block embedding due to security policies.</div>
-        </div>
-        <div class="dialog-actions">
-          <button class="dialog-btn cancel" id="urlDialogCancel">CANCEL</button>
-          <button class="dialog-btn confirm" id="urlDialogConfirm">EMBED</button>
+          <div class="project-save-section">
+            <label for="projectNameInput">SAVE CURRENT PROJECT:</label>
+            <div class="project-save-row">
+              <input type="text" id="projectNameInput" placeholder="Project name...">
+              <button class="dialog-btn confirm" id="projectSaveBtn">SAVE</button>
+            </div>
+          </div>
+          <div class="project-list-section">
+            <label>SAVED PROJECTS:</label>
+            <div id="projectsList" class="projects-list">
+              <!-- Projects will be populated here -->
+            </div>
+          </div>
         </div>
       </div>
     </div>

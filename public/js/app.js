@@ -7,7 +7,6 @@ class HackerPad {
     this.canvas = document.getElementById('canvas');
     this.ctx = this.canvas.getContext('2d');
     this.container = document.getElementById('canvas-container');
-    this.iframeContainer = document.getElementById('iframe-container');
 
     // State
     this.objects = [];
@@ -45,18 +44,19 @@ class HackerPad {
     this.fontSize = 24;
     this.opacity = 100;
 
+    // Color palette (10 slots)
+    this.colorPalette = this.loadColorPalette();
+    this.paletteTarget = 'stroke'; // 'stroke' or 'fill'
+
     // Object ID counter
     this.objectIdCounter = 0;
-
-    // Iframe elements map (id -> DOM element)
-    this.iframeElements = new Map();
-
-    // Pending embed position (for dialog)
-    this.pendingEmbedPosition = null;
 
     // Connector state
     this.connectingFrom = null;  // Source object when drawing connector
     this.connectingPreview = null;  // Preview endpoint while dragging
+
+    // Text editing state
+    this.editingTextObject = null;  // Text object currently being edited
 
     // Resize state
     this.isResizing = false;
@@ -74,7 +74,9 @@ class HackerPad {
     this.bindToolbar();
     this.bindProperties();
     this.bindKeyboard();
-    this.bindUrlDialog();
+    this.bindProjectsDialog();
+    this.bindRadialMenu();
+    this.bindColorPalette();
     this.saveState();
     this.render();
 
@@ -121,6 +123,7 @@ class HackerPad {
     this.canvas.addEventListener('mousemove', (e) => this.onMouseMove(e));
     this.canvas.addEventListener('mouseup', (e) => this.onMouseUp(e));
     this.canvas.addEventListener('mouseleave', (e) => this.onMouseUp(e));
+    this.canvas.addEventListener('dblclick', (e) => this.onDoubleClick(e));
 
     // Prevent middle-click default (auto-scroll)
     this.canvas.addEventListener('auxclick', (e) => {
@@ -137,6 +140,7 @@ class HackerPad {
       if (e.key === 'Escape') {
         textInput.style.display = 'none';
         textInput.value = '';
+        this.editingTextObject = null;
       }
       if (e.key === 'Enter' && !e.shiftKey) {
         e.preventDefault();
@@ -168,6 +172,7 @@ class HackerPad {
     document.getElementById('undoBtn').addEventListener('click', () => this.undo());
     document.getElementById('redoBtn').addEventListener('click', () => this.redo());
     document.getElementById('clearBtn').addEventListener('click', () => this.clearAll());
+    document.getElementById('projectsBtn').addEventListener('click', () => this.showProjectsDialog());
     document.getElementById('saveBtn').addEventListener('click', () => this.save());
     document.getElementById('loadBtn').addEventListener('click', () => {
       document.getElementById('loadInput').click();
@@ -213,8 +218,8 @@ class HackerPad {
 
   bindKeyboard() {
     document.addEventListener('keydown', (e) => {
-      // Don't intercept if typing in text input
-      if (e.target.id === 'text-input') return;
+      // Don't intercept if typing in any input field
+      if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
 
       // Tool shortcuts
       if (!e.ctrlKey && !e.metaKey) {
@@ -227,7 +232,6 @@ class HackerPad {
           case 'e': this.selectTool('ellipse'); break;
           case 't': this.selectTool('text'); break;
           case 'i': this.selectTool('image'); break;
-          case 'u': this.selectTool('embed'); break;
           case 'c': this.selectTool('connect'); break;
           case 'delete':
           case 'backspace':
@@ -277,7 +281,6 @@ class HackerPad {
     if (tool === 'image') {
       document.getElementById('imageInput').click();
     }
-    // Note: embed tool shows dialog on canvas click, not immediately
   }
 
   // ============================================
@@ -303,10 +306,10 @@ class HackerPad {
       return;
     }
 
-    // Auto-switch to drag mode when clicking on an image or iframe
+    // Auto-switch to drag mode when clicking on an image
     if (this.currentTool !== 'select' && this.currentTool !== 'pan') {
       const clickedObject = this.findObjectAt(x, y);
-      if (clickedObject && (clickedObject.type === 'image' || clickedObject.type === 'iframe')) {
+      if (clickedObject && clickedObject.type === 'image') {
         this.selectTool('select');
         this.handleSelectDown(x, y, e);
         return;
@@ -332,9 +335,6 @@ class HackerPad {
         break;
       case 'text':
         this.showTextInput(screenX, screenY, x, y);
-        break;
-      case 'embed':
-        this.showUrlDialog(x, y);
         break;
       case 'connect':
         this.handleConnectDown(x, y);
@@ -543,6 +543,19 @@ class HackerPad {
 
     this.updateZoomDisplay();
     this.render();
+  }
+
+  onDoubleClick(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    const screenX = e.clientX - rect.left;
+    const screenY = e.clientY - rect.top;
+    const { x, y } = this.screenToCanvas(screenX, screenY);
+
+    // Check if double-clicked on a text object
+    const clickedObject = this.findObjectAt(x, y);
+    if (clickedObject && clickedObject.type === 'text') {
+      this.editTextObject(clickedObject, screenX, screenY);
+    }
   }
 
   // ============================================
@@ -757,10 +770,6 @@ class HackerPad {
         return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
                y >= obj.y - margin && y <= obj.y + obj.height + margin;
 
-      case 'iframe':
-        return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
-               y >= obj.y - margin && y <= obj.y + obj.height + margin;
-
       case 'connector': {
         // Check if point is near the connector line
         const connFrom = this.objects.find(o => o.id === obj.fromId);
@@ -824,13 +833,6 @@ class HackerPad {
     // Get IDs of objects being deleted
     const deletedIds = this.selectedObjects.map(obj => obj.id);
 
-    // Remove iframe DOM elements for selected iframes
-    this.selectedObjects.forEach(obj => {
-      if (obj.type === 'iframe') {
-        this.removeIframeDomElement(obj.id);
-      }
-    });
-
     // Remove selected objects
     this.objects = this.objects.filter(obj => !this.selectedObjects.includes(obj));
 
@@ -877,7 +879,6 @@ class HackerPad {
 
   showTextInput(screenX, screenY, canvasX, canvasY) {
     const textInput = document.getElementById('text-input');
-    const containerRect = this.container.getBoundingClientRect();
 
     textInput.style.display = 'block';
     textInput.style.left = (screenX) + 'px';
@@ -887,16 +888,57 @@ class HackerPad {
     textInput.value = '';
     textInput.dataset.canvasX = canvasX;
     textInput.dataset.canvasY = canvasY;
+    this.editingTextObject = null;
 
     // Small delay to ensure focus works
     setTimeout(() => textInput.focus(), 10);
+  }
+
+  editTextObject(obj, screenX, screenY) {
+    const textInput = document.getElementById('text-input');
+
+    // Position the input at the text object's location
+    const screenPos = this.canvasToScreen(obj.x, obj.y);
+
+    textInput.style.display = 'block';
+    textInput.style.left = screenPos.x + 'px';
+    textInput.style.top = screenPos.y + 'px';
+    textInput.style.fontSize = (obj.fontSize * this.scale) + 'px';
+    textInput.style.color = obj.strokeColor;
+    textInput.value = obj.text;
+    textInput.dataset.canvasX = obj.x;
+    textInput.dataset.canvasY = obj.y;
+
+    // Store reference to the object being edited
+    this.editingTextObject = obj;
+
+    // Small delay to ensure focus works, then select all text
+    setTimeout(() => {
+      textInput.focus();
+      textInput.select();
+    }, 10);
   }
 
   finalizeText() {
     const textInput = document.getElementById('text-input');
     const text = textInput.value.trim();
 
-    if (text) {
+    if (this.editingTextObject) {
+      // Update existing text object
+      if (text) {
+        this.editingTextObject.text = text;
+        this.saveState();
+      } else {
+        // If text is empty, delete the object
+        this.objects = this.objects.filter(obj => obj !== this.editingTextObject);
+        this.selectedObjects = this.selectedObjects.filter(obj => obj !== this.editingTextObject);
+        this.saveState();
+      }
+      this.editingTextObject = null;
+      this.updateLayers();
+      this.render();
+    } else if (text) {
+      // Create new text object
       this.addObject({
         type: 'text',
         x: parseFloat(textInput.dataset.canvasX),
@@ -911,330 +953,6 @@ class HackerPad {
 
     textInput.style.display = 'none';
     textInput.value = '';
-  }
-
-  // ============================================
-  // URL DIALOG & IFRAME HANDLING
-  // ============================================
-
-  bindUrlDialog() {
-    const dialog = document.getElementById('url-dialog');
-    const urlInput = document.getElementById('urlInput');
-    const closeBtn = document.getElementById('urlDialogClose');
-    const cancelBtn = document.getElementById('urlDialogCancel');
-    const confirmBtn = document.getElementById('urlDialogConfirm');
-
-    const closeDialog = () => {
-      dialog.classList.remove('visible');
-      urlInput.value = '';
-      this.pendingEmbedPosition = null;
-    };
-
-    closeBtn.addEventListener('click', closeDialog);
-    cancelBtn.addEventListener('click', closeDialog);
-
-    dialog.addEventListener('click', (e) => {
-      if (e.target === dialog) closeDialog();
-    });
-
-    confirmBtn.addEventListener('click', () => {
-      const url = urlInput.value.trim();
-      if (url && this.pendingEmbedPosition) {
-        this.createIframe(url, this.pendingEmbedPosition.x, this.pendingEmbedPosition.y);
-      }
-      closeDialog();
-    });
-
-    urlInput.addEventListener('keydown', (e) => {
-      if (e.key === 'Enter') {
-        e.preventDefault();
-        confirmBtn.click();
-      }
-      if (e.key === 'Escape') {
-        closeDialog();
-      }
-    });
-  }
-
-  showUrlDialog(canvasX, canvasY) {
-    this.pendingEmbedPosition = { x: canvasX, y: canvasY };
-    const dialog = document.getElementById('url-dialog');
-    const urlInput = document.getElementById('urlInput');
-    dialog.classList.add('visible');
-    setTimeout(() => urlInput.focus(), 10);
-  }
-
-  createIframe(url, x, y) {
-    // Ensure URL has protocol
-    if (!url.startsWith('http://') && !url.startsWith('https://')) {
-      url = 'https://' + url;
-    }
-
-    const defaultWidth = 400;
-    const defaultHeight = 300;
-
-    const iframeObj = {
-      type: 'iframe',
-      x: x - defaultWidth / 2,
-      y: y - defaultHeight / 2,
-      width: defaultWidth,
-      height: defaultHeight,
-      url: url,
-      opacity: this.opacity
-    };
-
-    this.addObject(iframeObj);
-    this.createIframeDomElement(iframeObj);
-    this.render();
-  }
-
-  createIframeDomElement(obj) {
-    const wrapper = document.createElement('div');
-    wrapper.className = 'iframe-wrapper loading';
-    wrapper.dataset.objectId = obj.id;
-
-    // Header with URL and controls
-    const header = document.createElement('div');
-    header.className = 'iframe-header';
-    header.innerHTML = `
-      <span class="iframe-url" title="${obj.url}">${obj.url}</span>
-      <div class="iframe-controls">
-        <button class="iframe-control-btn interact-toggle" title="Toggle interaction">⚡</button>
-        <button class="iframe-control-btn refresh-btn" title="Refresh">↻</button>
-      </div>
-    `;
-
-    // Iframe element
-    const iframe = document.createElement('iframe');
-    iframe.src = obj.url;
-    iframe.setAttribute('sandbox', 'allow-scripts allow-same-origin allow-forms allow-popups');
-    iframe.addEventListener('load', () => {
-      wrapper.classList.remove('loading');
-    });
-
-    // Resize handles
-    const handles = ['nw', 'ne', 'sw', 'se'].map(pos => {
-      const handle = document.createElement('div');
-      handle.className = `iframe-resize-handle corner ${pos}`;
-      handle.dataset.handle = pos;
-      return handle;
-    });
-
-    wrapper.appendChild(header);
-    wrapper.appendChild(iframe);
-    handles.forEach(h => wrapper.appendChild(h));
-
-    this.iframeContainer.appendChild(wrapper);
-    this.iframeElements.set(obj.id, wrapper);
-
-    // Bind events for this iframe
-    this.bindIframeEvents(wrapper, obj);
-
-    // Position the iframe
-    this.updateIframePosition(obj);
-  }
-
-  bindIframeEvents(wrapper, obj) {
-    const header = wrapper.querySelector('.iframe-header');
-    const interactBtn = wrapper.querySelector('.interact-toggle');
-    const refreshBtn = wrapper.querySelector('.refresh-btn');
-    const iframe = wrapper.querySelector('iframe');
-    const handles = wrapper.querySelectorAll('.iframe-resize-handle');
-
-    // Toggle interaction mode
-    interactBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      wrapper.classList.toggle('interacting');
-      interactBtn.classList.toggle('active');
-    });
-
-    // Refresh iframe
-    refreshBtn.addEventListener('click', (e) => {
-      e.stopPropagation();
-      wrapper.classList.add('loading');
-      iframe.src = iframe.src;
-    });
-
-    // Header click to select
-    header.addEventListener('mousedown', (e) => {
-      if (e.target.closest('.iframe-controls')) return;
-      e.stopPropagation();
-
-      // Select this object
-      if (!e.shiftKey && !this.selectedObjects.includes(obj)) {
-        this.deselectAll();
-      }
-      if (!this.selectedObjects.includes(obj)) {
-        this.selectedObjects.push(obj);
-      }
-
-      // Start dragging
-      this.isDragging = true;
-      const { x, y } = this.screenToCanvas(e.clientX - this.container.getBoundingClientRect().left,
-                                            e.clientY - this.container.getBoundingClientRect().top);
-      this.startX = x;
-      this.startY = y;
-
-      this.selectedObjects.forEach(o => {
-        o._dragStartX = o.x;
-        o._dragStartY = o.y;
-      });
-
-      this.updateStatus();
-      this.updateLayers();
-      this.render();
-
-      const onMouseMove = (e) => {
-        const containerRect = this.container.getBoundingClientRect();
-        const { x, y } = this.screenToCanvas(e.clientX - containerRect.left, e.clientY - containerRect.top);
-        const dx = x - this.startX;
-        const dy = y - this.startY;
-
-        this.selectedObjects.forEach(o => {
-          o.x = (o._dragStartX || o.x) + dx;
-          o.y = (o._dragStartY || o.y) + dy;
-        });
-        this.render();
-      };
-
-      const onMouseUp = () => {
-        this.isDragging = false;
-        this.selectedObjects.forEach(o => {
-          delete o._dragStartX;
-          delete o._dragStartY;
-        });
-        this.saveState();
-        document.removeEventListener('mousemove', onMouseMove);
-        document.removeEventListener('mouseup', onMouseUp);
-      };
-
-      document.addEventListener('mousemove', onMouseMove);
-      document.addEventListener('mouseup', onMouseUp);
-    });
-
-    // Resize handles
-    handles.forEach(handle => {
-      handle.addEventListener('mousedown', (e) => {
-        e.stopPropagation();
-        e.preventDefault();
-
-        const handleType = handle.dataset.handle;
-        const startX = e.clientX;
-        const startY = e.clientY;
-        const startObjX = obj.x;
-        const startObjY = obj.y;
-        const startWidth = obj.width;
-        const startHeight = obj.height;
-
-        const onMouseMove = (e) => {
-          const dx = (e.clientX - startX) / this.scale;
-          const dy = (e.clientY - startY) / this.scale;
-
-          const minSize = 100;
-
-          switch (handleType) {
-            case 'se':
-              obj.width = Math.max(minSize, startWidth + dx);
-              obj.height = Math.max(minSize, startHeight + dy);
-              break;
-            case 'sw':
-              const newWidthSW = Math.max(minSize, startWidth - dx);
-              obj.x = startObjX + (startWidth - newWidthSW);
-              obj.width = newWidthSW;
-              obj.height = Math.max(minSize, startHeight + dy);
-              break;
-            case 'ne':
-              obj.width = Math.max(minSize, startWidth + dx);
-              const newHeightNE = Math.max(minSize, startHeight - dy);
-              obj.y = startObjY + (startHeight - newHeightNE);
-              obj.height = newHeightNE;
-              break;
-            case 'nw':
-              const newWidthNW = Math.max(minSize, startWidth - dx);
-              const newHeightNW = Math.max(minSize, startHeight - dy);
-              obj.x = startObjX + (startWidth - newWidthNW);
-              obj.y = startObjY + (startHeight - newHeightNW);
-              obj.width = newWidthNW;
-              obj.height = newHeightNW;
-              break;
-          }
-
-          this.render();
-        };
-
-        const onMouseUp = () => {
-          this.saveState();
-          document.removeEventListener('mousemove', onMouseMove);
-          document.removeEventListener('mouseup', onMouseUp);
-        };
-
-        document.addEventListener('mousemove', onMouseMove);
-        document.addEventListener('mouseup', onMouseUp);
-      });
-    });
-
-    // Click on wrapper body to select (when not interacting)
-    wrapper.addEventListener('mousedown', (e) => {
-      if (wrapper.classList.contains('interacting')) return;
-      if (e.target.closest('.iframe-header') || e.target.closest('.iframe-resize-handle')) return;
-
-      e.stopPropagation();
-
-      if (!e.shiftKey && !this.selectedObjects.includes(obj)) {
-        this.deselectAll();
-      }
-      if (!this.selectedObjects.includes(obj)) {
-        this.selectedObjects.push(obj);
-      }
-
-      this.updateStatus();
-      this.updateLayers();
-      this.render();
-    });
-  }
-
-  updateIframePosition(obj) {
-    const wrapper = this.iframeElements.get(obj.id);
-    if (!wrapper) return;
-
-    const screen = this.canvasToScreen(obj.x, obj.y);
-    const scaledWidth = obj.width * this.scale;
-    const scaledHeight = obj.height * this.scale;
-    const headerHeight = 28; // Approximate header height
-
-    wrapper.style.left = screen.x + 'px';
-    wrapper.style.top = screen.y + 'px';
-    wrapper.style.width = scaledWidth + 'px';
-    wrapper.style.height = (scaledHeight + headerHeight) + 'px';
-
-    // Update iframe size (minus header)
-    const iframe = wrapper.querySelector('iframe');
-    if (iframe) {
-      iframe.style.height = scaledHeight + 'px';
-    }
-
-    // Update selection state
-    if (this.selectedObjects.includes(obj)) {
-      wrapper.classList.add('selected');
-    } else {
-      wrapper.classList.remove('selected');
-    }
-  }
-
-  updateAllIframePositions() {
-    this.objects.forEach(obj => {
-      if (obj.type === 'iframe') {
-        this.updateIframePosition(obj);
-      }
-    });
-  }
-
-  removeIframeDomElement(id) {
-    const wrapper = this.iframeElements.get(id);
-    if (wrapper) {
-      wrapper.remove();
-      this.iframeElements.delete(id);
-    }
   }
 
   // ============================================
@@ -1497,9 +1215,6 @@ class HackerPad {
     this.selectedObjects.forEach(obj => this.drawSelectionIndicator(obj));
 
     ctx.restore();
-
-    // Update iframe positions to sync with canvas transforms
-    this.updateAllIframePositions();
   }
 
   drawObject(obj) {
@@ -1525,10 +1240,6 @@ class HackerPad {
         break;
       case 'image':
         this.drawImage(obj);
-        break;
-      case 'iframe':
-        // Iframes are rendered as DOM elements, but draw placeholder on canvas for selection
-        this.drawIframePlaceholder(obj);
         break;
       case 'connector':
         this.drawConnector(obj);
@@ -1617,16 +1328,6 @@ class HackerPad {
     }
   }
 
-  drawIframePlaceholder(obj) {
-    // Draw a subtle placeholder rectangle on canvas for iframe (actual iframe is DOM overlay)
-    const ctx = this.ctx;
-    ctx.strokeStyle = 'rgba(0, 255, 255, 0.3)';
-    ctx.lineWidth = 1;
-    ctx.setLineDash([5, 5]);
-    ctx.strokeRect(obj.x, obj.y, obj.width, obj.height);
-    ctx.setLineDash([]);
-  }
-
   drawSelectionIndicator(obj) {
     const ctx = this.ctx;
     ctx.save();
@@ -1701,9 +1402,6 @@ class HackerPad {
         return { x: obj.x, y: obj.y, width: textWidth, height: obj.fontSize };
 
       case 'image':
-        return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
-
-      case 'iframe':
         return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
 
       case 'connector': {
@@ -1825,7 +1523,6 @@ class HackerPad {
       if (clone.type === 'path') {
         clone.points = [...obj.points];
       }
-      // iframes are saved with their url, x, y, width, height - no DOM refs to remove
       return clone;
     });
 
@@ -1856,13 +1553,7 @@ class HackerPad {
   restoreState() {
     const state = JSON.parse(this.history[this.historyIndex]);
 
-    // Clear existing iframe DOM elements
-    this.iframeElements.forEach((wrapper, id) => {
-      wrapper.remove();
-    });
-    this.iframeElements.clear();
-
-    // Restore objects and reload images/iframes
+    // Restore objects and reload images
     this.objects = state.map(obj => {
       if (obj.type === 'image' && obj.src) {
         const img = new Image();
@@ -1870,13 +1561,6 @@ class HackerPad {
         obj.imageElement = img;
       }
       return obj;
-    });
-
-    // Recreate iframe DOM elements
-    this.objects.forEach(obj => {
-      if (obj.type === 'iframe') {
-        this.createIframeDomElement(obj);
-      }
     });
 
     this.selectedObjects = [];
@@ -1932,12 +1616,6 @@ class HackerPad {
   loadData(data) {
     if (!data.objects) return;
 
-    // Clear existing iframe DOM elements
-    this.iframeElements.forEach((wrapper, id) => {
-      wrapper.remove();
-    });
-    this.iframeElements.clear();
-
     this.objects = data.objects.map(obj => {
       if (obj.type === 'image' && obj.src) {
         const img = new Image();
@@ -1946,13 +1624,6 @@ class HackerPad {
         obj.imageElement = img;
       }
       return obj;
-    });
-
-    // Recreate iframe DOM elements
-    this.objects.forEach(obj => {
-      if (obj.type === 'iframe') {
-        this.createIframeDomElement(obj);
-      }
     });
 
     this.selectedObjects = [];
@@ -1968,12 +1639,6 @@ class HackerPad {
     if (this.objects.length === 0) return;
 
     if (confirm('⚠ CLEAR ALL OBJECTS?')) {
-      // Clear iframe DOM elements
-      this.iframeElements.forEach((wrapper, id) => {
-        wrapper.remove();
-      });
-      this.iframeElements.clear();
-
       this.objects = [];
       this.selectedObjects = [];
       this.saveState();
@@ -1981,6 +1646,382 @@ class HackerPad {
       this.updateLayers();
       this.render();
     }
+  }
+
+  // ============================================
+  // PROJECTS (localStorage)
+  // ============================================
+
+  bindProjectsDialog() {
+    const dialog = document.getElementById('projects-dialog');
+    const closeBtn = document.getElementById('projectsDialogClose');
+    const saveBtn = document.getElementById('projectSaveBtn');
+    const nameInput = document.getElementById('projectNameInput');
+
+    closeBtn.addEventListener('click', () => this.hideProjectsDialog());
+
+    dialog.addEventListener('click', (e) => {
+      if (e.target === dialog) this.hideProjectsDialog();
+    });
+
+    saveBtn.addEventListener('click', () => {
+      const name = nameInput.value.trim();
+      if (name) {
+        this.saveProjectToStorage(name);
+        nameInput.value = '';
+        this.updateProjectsListUI();
+      }
+    });
+
+    nameInput.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter') {
+        e.preventDefault();
+        saveBtn.click();
+      }
+      if (e.key === 'Escape') {
+        this.hideProjectsDialog();
+      }
+    });
+  }
+
+  showProjectsDialog() {
+    const dialog = document.getElementById('projects-dialog');
+    dialog.classList.add('visible');
+    this.updateProjectsListUI();
+    setTimeout(() => document.getElementById('projectNameInput').focus(), 10);
+  }
+
+  hideProjectsDialog() {
+    const dialog = document.getElementById('projects-dialog');
+    dialog.classList.remove('visible');
+  }
+
+  getProjectsFromStorage() {
+    try {
+      const projects = localStorage.getItem('hackerpad_projects');
+      return projects ? JSON.parse(projects) : {};
+    } catch (err) {
+      console.error('Failed to load projects from storage:', err);
+      return {};
+    }
+  }
+
+  saveProjectToStorage(name) {
+    const projects = this.getProjectsFromStorage();
+
+    const projectData = {
+      version: '1.0',
+      name: name,
+      savedAt: Date.now(),
+      objects: this.objects.map(obj => {
+        const clone = { ...obj };
+        if (clone.type === 'image') {
+          delete clone.imageElement;
+        }
+        if (clone.type === 'path') {
+          clone.points = [...obj.points];
+        }
+        return clone;
+      })
+    };
+
+    // Use name as key (will overwrite if same name exists)
+    projects[name] = projectData;
+
+    try {
+      localStorage.setItem('hackerpad_projects', JSON.stringify(projects));
+      console.log(`%c[SAVE] Project "${name}" saved to storage`, 'color: #00ff9d');
+    } catch (err) {
+      if (err.name === 'QuotaExceededError') {
+        alert('Storage full! Delete some projects to make room.');
+      } else {
+        console.error('Failed to save project:', err);
+      }
+    }
+  }
+
+  loadProjectFromStorage(name) {
+    const projects = this.getProjectsFromStorage();
+    const project = projects[name];
+
+    if (!project) {
+      console.error(`Project "${name}" not found`);
+      return;
+    }
+
+    this.loadData(project);
+    this.hideProjectsDialog();
+    console.log(`%c[LOAD] Project "${name}" loaded from storage`, 'color: #00ff9d');
+  }
+
+  deleteProjectFromStorage(name) {
+    if (!confirm(`Delete project "${name}"?`)) return;
+
+    const projects = this.getProjectsFromStorage();
+    delete projects[name];
+
+    try {
+      localStorage.setItem('hackerpad_projects', JSON.stringify(projects));
+      this.updateProjectsListUI();
+      console.log(`%c[DELETE] Project "${name}" deleted`, 'color: #ff6b9d');
+    } catch (err) {
+      console.error('Failed to delete project:', err);
+    }
+  }
+
+  updateProjectsListUI() {
+    const listContainer = document.getElementById('projectsList');
+    const projects = this.getProjectsFromStorage();
+    const projectNames = Object.keys(projects).sort((a, b) => {
+      // Sort by saved date, newest first
+      return (projects[b].savedAt || 0) - (projects[a].savedAt || 0);
+    });
+
+    listContainer.innerHTML = '';
+
+    projectNames.forEach(name => {
+      const project = projects[name];
+      const item = document.createElement('div');
+      item.className = 'project-item';
+
+      const savedDate = project.savedAt
+        ? new Date(project.savedAt).toLocaleString()
+        : 'Unknown date';
+
+      const objectCount = project.objects ? project.objects.length : 0;
+
+      item.innerHTML = `
+        <div class="project-info">
+          <span class="project-name">${name}</span>
+          <span class="project-date">${savedDate} · ${objectCount} objects</span>
+        </div>
+        <div class="project-actions">
+          <button class="project-action-btn load-btn" title="Load">▶</button>
+          <button class="project-action-btn delete-btn" title="Delete">×</button>
+        </div>
+      `;
+
+      const loadBtn = item.querySelector('.load-btn');
+      const deleteBtn = item.querySelector('.delete-btn');
+
+      loadBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.loadProjectFromStorage(name);
+      });
+
+      deleteBtn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        this.deleteProjectFromStorage(name);
+      });
+
+      // Click on item also loads
+      item.addEventListener('click', () => {
+        this.loadProjectFromStorage(name);
+      });
+
+      listContainer.appendChild(item);
+    });
+  }
+
+  // ============================================
+  // RADIAL MENU
+  // ============================================
+
+  bindRadialMenu() {
+    const menu = document.getElementById('radial-menu');
+    const items = menu.querySelectorAll('.radial-item');
+
+    // Position items in a circle
+    const radius = 120;
+    const startAngle = -90; // Start from top
+    const angleStep = 360 / items.length;
+
+    items.forEach((item, index) => {
+      const angle = (startAngle + index * angleStep) * (Math.PI / 180);
+      const x = Math.cos(angle) * radius;
+      const y = Math.sin(angle) * radius;
+      item.style.transform = `translate(${x}px, ${y}px)`;
+    });
+
+    // Right-click to show menu
+    this.canvas.addEventListener('contextmenu', (e) => {
+      e.preventDefault();
+      this.showRadialMenu(e.clientX, e.clientY);
+    });
+
+    // Click on item to select tool
+    items.forEach(item => {
+      item.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const tool = item.dataset.tool;
+        this.selectTool(tool);
+        this.hideRadialMenu();
+      });
+    });
+
+    // Click outside to close
+    document.addEventListener('mousedown', (e) => {
+      if (menu.classList.contains('visible') && !menu.contains(e.target)) {
+        this.hideRadialMenu();
+      }
+    });
+
+    // Escape to close
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && menu.classList.contains('visible')) {
+        this.hideRadialMenu();
+      }
+    });
+  }
+
+  showRadialMenu(x, y) {
+    const menu = document.getElementById('radial-menu');
+    const items = menu.querySelectorAll('.radial-item');
+
+    // Position menu centered at click location
+    const menuWidth = 340;
+    const menuHeight = 340;
+
+    // Keep menu within viewport
+    const viewportWidth = window.innerWidth;
+    const viewportHeight = window.innerHeight;
+
+    let menuX = x - menuWidth / 2;
+    let menuY = y - menuHeight / 2;
+
+    // Clamp to viewport
+    menuX = Math.max(10, Math.min(menuX, viewportWidth - menuWidth - 10));
+    menuY = Math.max(10, Math.min(menuY, viewportHeight - menuHeight - 10));
+
+    menu.style.left = menuX + 'px';
+    menu.style.top = menuY + 'px';
+
+    // Update active state
+    items.forEach(item => {
+      item.classList.toggle('active', item.dataset.tool === this.currentTool);
+    });
+
+    menu.classList.add('visible');
+  }
+
+  hideRadialMenu() {
+    const menu = document.getElementById('radial-menu');
+    menu.classList.remove('visible');
+  }
+
+  // ============================================
+  // COLOR PALETTE
+  // ============================================
+
+  loadColorPalette() {
+    try {
+      const saved = localStorage.getItem('hackerpad_palette');
+      if (saved) {
+        return JSON.parse(saved);
+      }
+    } catch (err) {
+      console.error('Failed to load color palette:', err);
+    }
+    // Default cyberpunk color palette
+    return [
+      '#00ff9d', // Neon green (primary)
+      '#00ffff', // Cyan
+      '#ff6b9d', // Hot pink
+      '#bf00ff', // Purple
+      '#ff0040', // Red
+      '#ffff00', // Yellow
+      '#ff6600', // Orange
+      '#00a8ff', // Electric blue
+      '#39ff14', // Radioactive green
+      '#ffffff', // White
+    ];
+  }
+
+  saveColorPalette() {
+    try {
+      localStorage.setItem('hackerpad_palette', JSON.stringify(this.colorPalette));
+    } catch (err) {
+      console.error('Failed to save color palette:', err);
+    }
+  }
+
+  bindColorPalette() {
+    const palette = document.getElementById('colorPalette');
+    const slots = palette.querySelectorAll('.palette-slot');
+    const targetBtns = document.querySelectorAll('.palette-target');
+
+    // Initialize slot colors from saved palette
+    this.updatePaletteUI();
+
+    // Target toggle (stroke/fill)
+    targetBtns.forEach(btn => {
+      btn.addEventListener('click', () => {
+        targetBtns.forEach(b => b.classList.remove('active'));
+        btn.classList.add('active');
+        this.paletteTarget = btn.dataset.target;
+      });
+    });
+
+    slots.forEach((slot, index) => {
+      // Left click - use color (if slot has color) or save current color (if empty)
+      slot.addEventListener('click', (e) => {
+        e.preventDefault();
+        const currentColor = this.paletteTarget === 'stroke' ? this.strokeColor : this.fillColor;
+
+        if (this.colorPalette[index]) {
+          // Use the saved color
+          if (this.paletteTarget === 'stroke') {
+            this.strokeColor = this.colorPalette[index];
+            document.getElementById('strokeColor').value = this.strokeColor;
+            this.updateSelectedObjects('strokeColor', this.strokeColor);
+          } else {
+            this.fillColor = this.colorPalette[index];
+            document.getElementById('fillColor').value = this.fillColor;
+            this.updateSelectedObjects('fillColor', this.fillColor);
+          }
+        } else {
+          // Save current color to this slot
+          this.colorPalette[index] = currentColor;
+          this.saveColorPalette();
+          this.updatePaletteUI();
+        }
+      });
+
+      // Right click - save current color to slot (overwrite)
+      slot.addEventListener('contextmenu', (e) => {
+        e.preventDefault();
+        const currentColor = this.paletteTarget === 'stroke' ? this.strokeColor : this.fillColor;
+        this.colorPalette[index] = currentColor;
+        this.saveColorPalette();
+        this.updatePaletteUI();
+      });
+
+      // Middle click - clear slot
+      slot.addEventListener('auxclick', (e) => {
+        if (e.button === 1) {
+          e.preventDefault();
+          this.colorPalette[index] = null;
+          this.saveColorPalette();
+          this.updatePaletteUI();
+        }
+      });
+    });
+  }
+
+  updatePaletteUI() {
+    const slots = document.querySelectorAll('.palette-slot');
+    slots.forEach((slot, index) => {
+      const color = this.colorPalette[index];
+      if (color) {
+        slot.style.backgroundColor = color;
+        slot.classList.remove('empty');
+        slot.title = `${color} - Click: use · Right-click: replace · Middle-click: clear`;
+      } else {
+        slot.style.backgroundColor = '';
+        slot.classList.add('empty');
+        slot.title = 'Empty slot - Click or right-click to save current stroke color';
+      }
+    });
   }
 
   // ============================================
@@ -2004,7 +2045,6 @@ class HackerPad {
       ellipse: '◯',
       text: 'A',
       image: '⌼',
-      iframe: '⧉',
       connector: '→'
     };
 
@@ -2038,12 +2078,6 @@ class HackerPad {
         `${Math.round(bounds.width)} × ${Math.round(bounds.height)}` : '';
 
       switch (obj.type) {
-        case 'iframe':
-          details = `
-            <span class="layer-url" title="${obj.url}">${obj.url}</span>
-            <span class="layer-pos">${posInfo} · ${sizeInfo}</span>
-          `;
-          break;
         case 'text':
           const textPreview = obj.text.length > 20 ? obj.text.substring(0, 20) + '...' : obj.text;
           details = `
@@ -2107,9 +2141,6 @@ class HackerPad {
       const deleteBtn = item.querySelector('.delete-btn');
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        if (obj.type === 'iframe') {
-          this.removeIframeDomElement(obj.id);
-        }
         this.objects = this.objects.filter(o => o !== obj);
         // Also remove connectors referencing this object
         this.objects = this.objects.filter(o => {
