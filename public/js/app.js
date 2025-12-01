@@ -1832,7 +1832,7 @@ class HackerPad {
     const items = menu.querySelectorAll('.radial-item');
 
     // Position items in a circle
-    const radius = 120;
+    const radius = 175;
     const startAngle = -90; // Start from top
     const angleStep = 360 / items.length;
 
@@ -1879,8 +1879,8 @@ class HackerPad {
     const items = menu.querySelectorAll('.radial-item');
 
     // Position menu centered at click location
-    const menuWidth = 340;
-    const menuHeight = 340;
+    const menuWidth = 500;
+    const menuHeight = 500;
 
     // Keep menu within viewport
     const viewportWidth = window.innerWidth;
