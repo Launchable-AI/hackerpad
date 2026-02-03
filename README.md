@@ -2,6 +2,8 @@
 
 A cyberpunk-themed canvas drawing application built with vanilla JavaScript. No frameworks, no dependencies - just pure HTML, CSS, and JS.
 
+**Try it now:** [hackerpad.ink](https://hackerpad.ink)
+
 https://github.com/user-attachments/assets/22dbc984-a18c-4719-9208-51f1fe7bae2d
 
 ## Features
