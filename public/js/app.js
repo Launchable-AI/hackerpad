@@ -64,6 +64,12 @@ class HackerPad {
     this.resizeObject = null;
     this.resizeStart = null;  // Starting dimensions
 
+    // Internal clipboard for copy/paste of canvas objects
+    this.copiedObjects = [];
+
+    // Group editing state
+    this.enteredGroup = null;  // Currently "entered" group for editing children
+
     // Initialize
     this.init();
   }
@@ -132,6 +138,9 @@ class HackerPad {
 
     // Wheel for zoom
     this.canvas.addEventListener('wheel', (e) => this.onWheel(e), { passive: false });
+
+    // Clipboard paste
+    document.addEventListener('paste', (e) => this.onPaste(e));
 
     // Text input
     const textInput = document.getElementById('text-input');
@@ -242,6 +251,9 @@ class HackerPad {
             this.deleteSelected();
             break;
           case 'escape':
+            if (this.enteredGroup) {
+              this.enteredGroup = null;
+            }
             this.deselectAll();
             break;
         }
@@ -269,6 +281,21 @@ class HackerPad {
           case 'a':
             e.preventDefault();
             this.selectAll();
+            break;
+          case 'c':
+            this.copySelected();
+            break;
+          case 'd':
+            e.preventDefault();
+            this.duplicateSelected();
+            break;
+          case 'g':
+            e.preventDefault();
+            if (e.shiftKey) {
+              this.ungroupSelected();
+            } else {
+              this.groupSelected();
+            }
             break;
         }
       }
@@ -377,6 +404,8 @@ class HackerPad {
           'sw': 'nesw-resize'
         };
         this.canvas.style.cursor = cursors[handleHit.handle];
+      } else if (this.findObjectAt(x, y)) {
+        this.canvas.style.cursor = 'move';
       } else {
         this.canvas.style.cursor = 'crosshair';
       }
@@ -402,10 +431,7 @@ class HackerPad {
       const dx = x - this.startX;
       const dy = y - this.startY;
 
-      this.selectedObjects.forEach(obj => {
-        obj.x = (obj._dragStartX || obj.x) + dx;
-        obj.y = (obj._dragStartY || obj.y) + dy;
-      });
+      this.selectedObjects.forEach(obj => this.applyDrag(obj, dx, dy));
 
       this.render();
       return;
@@ -455,10 +481,7 @@ class HackerPad {
 
     if (this.isDragging) {
       this.isDragging = false;
-      this.selectedObjects.forEach(obj => {
-        delete obj._dragStartX;
-        delete obj._dragStartY;
-      });
+      this.selectedObjects.forEach(obj => this.cleanupDrag(obj));
       this.saveState();
       this.render();
       return;
@@ -565,10 +588,192 @@ class HackerPad {
     const screenY = e.clientY - rect.top;
     const { x, y } = this.screenToCanvas(screenX, screenY);
 
-    // Check if double-clicked on a text object
     const clickedObject = this.findObjectAt(x, y);
-    if (clickedObject && clickedObject.type === 'text') {
+    if (!clickedObject) return;
+
+    // Double-click on a group or a child of a selected group: enter the group
+    // (locked groups cannot be entered)
+    if (this.enteredGroup === null) {
+      if (clickedObject.type === 'group' && !clickedObject.locked) {
+        this.enteredGroup = clickedObject;
+        this.selectedObjects = [];
+        this.updateLayers();
+        this.render();
+        return;
+      }
+      const parentGroup = this.findGroupForObject(clickedObject);
+      if (parentGroup && !parentGroup.locked && this.selectedObjects.includes(parentGroup)) {
+        this.enteredGroup = parentGroup;
+        this.selectedObjects = [clickedObject];
+        this.updateLayers();
+        this.render();
+        return;
+      }
+    }
+
+    // If inside a group or no group context, allow text editing
+    if (clickedObject.type === 'text') {
       this.editTextObject(clickedObject, screenX, screenY);
+    }
+  }
+
+  // ============================================
+  // CLIPBOARD
+  // ============================================
+
+  copySelected() {
+    if (this.selectedObjects.length === 0) return;
+
+    // Collect all objects to copy, including children of groups
+    const objectsToCopy = [];
+    const seenIds = new Set();
+
+    this.selectedObjects.forEach(obj => {
+      if (seenIds.has(obj.id)) return;
+
+      if (obj.type === 'group') {
+        // Add children first so IDs can be remapped during paste
+        const children = this.getGroupChildren(obj);
+        children.forEach(child => {
+          if (!seenIds.has(child.id)) {
+            objectsToCopy.push(child);
+            seenIds.add(child.id);
+          }
+        });
+      }
+
+      objectsToCopy.push(obj);
+      seenIds.add(obj.id);
+    });
+
+    this.copiedObjects = objectsToCopy.map(obj => this.cloneObject(obj));
+  }
+
+  cloneObject(obj) {
+    const clone = {};
+    for (const key of Object.keys(obj)) {
+      if (key === 'imageElement') continue; // skip DOM element, recreate on paste
+      if (key.startsWith('_')) continue;    // skip temp drag state
+      const val = obj[key];
+      if (Array.isArray(val)) {
+        clone[key] = val.map(item =>
+          typeof item === 'object' && item !== null ? { ...item } : item
+        );
+      } else {
+        clone[key] = val;
+      }
+    }
+    return clone;
+  }
+
+  pasteObjects() {
+    if (this.copiedObjects.length === 0) return;
+
+    const PASTE_OFFSET = 20;
+    const pasted = [];
+    const idMap = new Map();
+
+    // First pass: paste non-group objects and build old→new ID map
+    this.copiedObjects.forEach(source => {
+      if (source.type === 'group') return;
+
+      const obj = { ...source };
+      const oldId = obj.id;
+
+      // Offset so paste is visually distinct from original
+      if (obj.type === 'path' && Array.isArray(obj.points)) {
+        obj.points = source.points.map(p => ({ x: p.x + PASTE_OFFSET, y: p.y + PASTE_OFFSET }));
+      } else if (obj.type === 'line') {
+        obj.x += PASTE_OFFSET;
+        obj.y += PASTE_OFFSET;
+        obj.x2 += PASTE_OFFSET;
+        obj.y2 += PASTE_OFFSET;
+      } else if (obj.x !== undefined) {
+        obj.x += PASTE_OFFSET;
+        obj.y += PASTE_OFFSET;
+      }
+
+      // Recreate Image element for image objects
+      if (obj.type === 'image' && obj.src) {
+        const img = new Image();
+        img.src = obj.src;
+        obj.imageElement = img;
+      }
+
+      this.addObject(obj);
+      idMap.set(oldId, obj.id);
+      pasted.push(obj);
+    });
+
+    // Second pass: paste groups with remapped children, inserted before their children
+    this.copiedObjects.forEach(source => {
+      if (source.type !== 'group') return;
+
+      const obj = { ...source };
+      obj.children = source.children
+        .map(childId => idMap.get(childId))
+        .filter(id => id !== undefined);
+
+      if (obj.children.length === 0) return;
+
+      // Insert group before its first child
+      const firstChildIndex = Math.min(
+        ...obj.children.map(id => this.objects.findIndex(o => o.id === id))
+      );
+
+      obj.id = ++this.objectIdCounter;
+      this.objects.splice(firstChildIndex, 0, obj);
+      pasted.push(obj);
+    });
+
+    // Select only top-level pasted objects (not children of groups)
+    const childIds = new Set();
+    pasted.forEach(obj => {
+      if (obj.type === 'group') {
+        obj.children.forEach(id => childIds.add(id));
+      }
+    });
+    this.selectedObjects = pasted.filter(obj => !childIds.has(obj.id));
+    this.copiedObjects = pasted.map(obj => this.cloneObject(obj));
+    this.saveState();
+    this.updateStatus();
+    this.updateLayers();
+    this.render();
+  }
+
+  duplicateSelected() {
+    if (this.selectedObjects.length === 0) return;
+    this.copySelected();
+    this.pasteObjects();
+  }
+
+  onPaste(e) {
+    // Don't handle paste if typing in an input field
+    if (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') return;
+
+    // Check system clipboard for images first
+    const items = e.clipboardData && e.clipboardData.items;
+    if (items) {
+      for (const item of items) {
+        if (item.type.startsWith('image/')) {
+          e.preventDefault();
+          const blob = item.getAsFile();
+          if (!blob) continue;
+
+          const reader = new FileReader();
+          reader.onload = (event) => {
+            this.loadImage(event.target.result);
+          };
+          reader.readAsDataURL(blob);
+          return;
+        }
+      }
+    }
+
+    // Fall back to internal clipboard for canvas objects
+    if (this.copiedObjects.length > 0) {
+      e.preventDefault();
+      this.pasteObjects();
     }
   }
 
@@ -586,38 +791,88 @@ class HackerPad {
 
       const obj = handleHit.object;
       const bounds = this.getObjectBounds(obj);
-      this.resizeStart = {
-        x: obj.x,
-        y: obj.y,
-        width: bounds.width,
-        height: bounds.height,
-        mouseX: x,
-        mouseY: y,
-        fontSize: obj.fontSize || null  // For text resizing
-      };
+
+      if (obj.type === 'group') {
+        this.resizeStart = {
+          x: bounds.x,
+          y: bounds.y,
+          width: bounds.width,
+          height: bounds.height,
+          mouseX: x,
+          mouseY: y,
+          childStarts: this.getGroupChildren(obj).map(child => ({
+            id: child.id,
+            type: child.type,
+            x: child.x,
+            y: child.y,
+            width: child.width,
+            height: child.height,
+            radiusX: child.radiusX,
+            radiusY: child.radiusY,
+            x2: child.x2,
+            y2: child.y2,
+            fontSize: child.fontSize,
+            points: child.type === 'path' ? child.points.map(p => ({...p})) : undefined,
+          }))
+        };
+      } else {
+        this.resizeStart = {
+          x: obj.x,
+          y: obj.y,
+          width: bounds.width,
+          height: bounds.height,
+          mouseX: x,
+          mouseY: y,
+          fontSize: obj.fontSize || null
+        };
+      }
       return;
     }
 
     const clickedObject = this.findObjectAt(x, y);
 
     if (clickedObject) {
-      if (!e.shiftKey && !this.selectedObjects.includes(clickedObject)) {
-        this.deselectAll();
+      let objectToSelect = clickedObject;
+
+      // If clicked a child of a group, select the group instead (unless entered)
+      if (clickedObject.type !== 'group') {
+        const parentGroup = this.findGroupForObject(clickedObject);
+        if (parentGroup && parentGroup !== this.enteredGroup) {
+          objectToSelect = parentGroup;
+        }
       }
 
-      if (!this.selectedObjects.includes(clickedObject)) {
-        this.selectedObjects.push(clickedObject);
+      // If entered a group and clicking outside it, exit the group
+      if (this.enteredGroup) {
+        const isChildOfEntered = this.enteredGroup.children.includes(clickedObject.id);
+        const isTheGroup = clickedObject === this.enteredGroup;
+        if (!isChildOfEntered && !isTheGroup) {
+          this.enteredGroup = null;
+          // Re-evaluate: the clicked object might be in another group
+          if (clickedObject.type !== 'group') {
+            const parentGroup = this.findGroupForObject(clickedObject);
+            if (parentGroup) {
+              objectToSelect = parentGroup;
+            }
+          }
+        }
+      }
+
+      if (!e.shiftKey && !this.selectedObjects.includes(objectToSelect)) {
+        this.selectedObjects = [];
+      }
+
+      if (!this.selectedObjects.includes(objectToSelect)) {
+        this.selectedObjects.push(objectToSelect);
       }
 
       // Start dragging
       this.isDragging = true;
-      this.selectedObjects.forEach(obj => {
-        obj._dragStartX = obj.x;
-        obj._dragStartY = obj.y;
-      });
+      this.selectedObjects.forEach(obj => this.setupDragStart(obj));
     } else {
       if (!e.shiftKey) {
-        this.deselectAll();
+        this.selectedObjects = [];
+        this.enteredGroup = null;
       }
     }
 
@@ -653,7 +908,7 @@ class HackerPad {
   }
 
   isResizable(obj) {
-    return ['rect', 'image', 'ellipse', 'text'].includes(obj.type);
+    return ['rect', 'image', 'ellipse', 'text', 'group'].includes(obj.type);
   }
 
   handleResize(x, y) {
@@ -664,7 +919,9 @@ class HackerPad {
     const minSize = 20;
 
     // Handle different object types
-    if (obj.type === 'ellipse') {
+    if (obj.type === 'group') {
+      this.handleGroupResize(dx, dy);
+    } else if (obj.type === 'ellipse') {
       this.handleEllipseResize(dx, dy);
     } else if (obj.type === 'text') {
       this.handleTextResize(dx, dy);
@@ -764,6 +1021,95 @@ class HackerPad {
     this.fontSize = obj.fontSize;
   }
 
+  handleGroupResize(dx, dy) {
+    const obj = this.resizeObject;
+    const start = this.resizeStart;
+    const padding = obj.padding || 10;
+
+    let newWidth, newHeight, newX, newY;
+    switch (this.resizeHandle) {
+      case 'se':
+        newWidth = Math.max(60, start.width + dx);
+        newHeight = Math.max(60, start.height + dy);
+        newX = start.x;
+        newY = start.y;
+        break;
+      case 'sw':
+        newWidth = Math.max(60, start.width - dx);
+        newHeight = Math.max(60, start.height + dy);
+        newX = start.x + (start.width - newWidth);
+        newY = start.y;
+        break;
+      case 'ne':
+        newWidth = Math.max(60, start.width + dx);
+        newHeight = Math.max(60, start.height - dy);
+        newX = start.x;
+        newY = start.y + (start.height - newHeight);
+        break;
+      case 'nw':
+        newWidth = Math.max(60, start.width - dx);
+        newHeight = Math.max(60, start.height - dy);
+        newX = start.x + (start.width - newWidth);
+        newY = start.y + (start.height - newHeight);
+        break;
+    }
+
+    const oldContentW = start.width - padding * 2;
+    const oldContentH = start.height - padding * 2;
+    const newContentW = newWidth - padding * 2;
+    const newContentH = newHeight - padding * 2;
+
+    if (oldContentW <= 0 || oldContentH <= 0) return;
+
+    const scaleX = newContentW / oldContentW;
+    const scaleY = newContentH / oldContentH;
+    const originX = start.x + padding;
+    const originY = start.y + padding;
+    const newOriginX = newX + padding;
+    const newOriginY = newY + padding;
+
+    const children = this.getGroupChildren(obj);
+    start.childStarts.forEach(cs => {
+      const child = children.find(c => c.id === cs.id);
+      if (!child) return;
+
+      switch (child.type) {
+        case 'rect':
+        case 'image':
+          child.x = newOriginX + (cs.x - originX) * scaleX;
+          child.y = newOriginY + (cs.y - originY) * scaleY;
+          child.width = cs.width * scaleX;
+          child.height = cs.height * scaleY;
+          break;
+        case 'ellipse':
+          child.x = newOriginX + (cs.x - originX) * scaleX;
+          child.y = newOriginY + (cs.y - originY) * scaleY;
+          child.radiusX = cs.radiusX * scaleX;
+          child.radiusY = cs.radiusY * scaleY;
+          break;
+        case 'text':
+          child.x = newOriginX + (cs.x - originX) * scaleX;
+          child.y = newOriginY + (cs.y - originY) * scaleY;
+          child.fontSize = Math.max(8, Math.round(cs.fontSize * Math.min(scaleX, scaleY)));
+          break;
+        case 'line':
+          child.x = newOriginX + (cs.x - originX) * scaleX;
+          child.y = newOriginY + (cs.y - originY) * scaleY;
+          child.x2 = newOriginX + (cs.x2 - originX) * scaleX;
+          child.y2 = newOriginY + (cs.y2 - originY) * scaleY;
+          break;
+        case 'path':
+          if (cs.points) {
+            child.points = cs.points.map(p => ({
+              x: newOriginX + (p.x - originX) * scaleX,
+              y: newOriginY + (p.y - originY) * scaleY
+            }));
+          }
+          break;
+      }
+    });
+  }
+
   finalizeResize() {
     this.isResizing = false;
     this.resizeHandle = null;
@@ -823,6 +1169,12 @@ class HackerPad {
         return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
                y >= obj.y - margin && y <= obj.y + obj.height + margin;
 
+      case 'group': {
+        const groupBounds = this.getObjectBounds(obj);
+        return x >= groupBounds.x - margin && x <= groupBounds.x + groupBounds.width + margin &&
+               y >= groupBounds.y - margin && y <= groupBounds.y + groupBounds.height + margin;
+      }
+
       case 'connector': {
         // Check if point is near the connector line
         const connFrom = this.objects.find(o => o.id === obj.fromId);
@@ -866,8 +1218,69 @@ class HackerPad {
     return Math.sqrt((px - xx) ** 2 + (py - yy) ** 2);
   }
 
+  // ============================================
+  // GROUP HELPERS
+  // ============================================
+
+  getGroupChildren(group) {
+    return group.children.map(id => this.objects.find(o => o.id === id)).filter(Boolean);
+  }
+
+  findGroupForObject(obj) {
+    return this.objects.find(g => g.type === 'group' && g.children.includes(obj.id));
+  }
+
+  setupDragStart(obj) {
+    obj._dragStartX = obj.x;
+    obj._dragStartY = obj.y;
+    if (obj.type === 'path') {
+      obj._dragStartPoints = obj.points.map(p => ({ x: p.x, y: p.y }));
+    }
+    if (obj.type === 'line') {
+      obj._dragStartX2 = obj.x2;
+      obj._dragStartY2 = obj.y2;
+    }
+    if (obj.type === 'group') {
+      this.getGroupChildren(obj).forEach(child => this.setupDragStart(child));
+    }
+  }
+
+  applyDrag(obj, dx, dy) {
+    if (obj.type === 'path' && obj._dragStartPoints) {
+      obj.points = obj._dragStartPoints.map(p => ({ x: p.x + dx, y: p.y + dy }));
+    } else if (obj.type === 'line') {
+      obj.x = (obj._dragStartX ?? obj.x) + dx;
+      obj.y = (obj._dragStartY ?? obj.y) + dy;
+      obj.x2 = (obj._dragStartX2 ?? obj.x2) + dx;
+      obj.y2 = (obj._dragStartY2 ?? obj.y2) + dy;
+    } else if (obj.type === 'group') {
+      this.getGroupChildren(obj).forEach(child => this.applyDrag(child, dx, dy));
+    } else {
+      obj.x = (obj._dragStartX ?? obj.x) + dx;
+      obj.y = (obj._dragStartY ?? obj.y) + dy;
+    }
+  }
+
+  cleanupDrag(obj) {
+    delete obj._dragStartX;
+    delete obj._dragStartY;
+    delete obj._dragStartPoints;
+    delete obj._dragStartX2;
+    delete obj._dragStartY2;
+    if (obj.type === 'group') {
+      this.getGroupChildren(obj).forEach(child => this.cleanupDrag(child));
+    }
+  }
+
   selectAll() {
-    this.selectedObjects = [...this.objects];
+    // Skip children that belong to groups (select the group instead)
+    const childIds = new Set();
+    this.objects.forEach(obj => {
+      if (obj.type === 'group') {
+        obj.children.forEach(id => childIds.add(id));
+      }
+    });
+    this.selectedObjects = this.objects.filter(obj => !childIds.has(obj.id));
     this.updateStatus();
     this.updateLayers();
     this.render();
@@ -883,21 +1296,44 @@ class HackerPad {
   deleteSelected() {
     if (this.selectedObjects.length === 0) return;
 
-    // Get IDs of objects being deleted
-    const deletedIds = this.selectedObjects.map(obj => obj.id);
+    // Collect all IDs to delete, including children of groups
+    const deletedIds = new Set();
+    this.selectedObjects.forEach(obj => {
+      deletedIds.add(obj.id);
+      if (obj.type === 'group') {
+        obj.children.forEach(id => deletedIds.add(id));
+      }
+    });
 
-    // Remove selected objects
-    this.objects = this.objects.filter(obj => !this.selectedObjects.includes(obj));
+    // Also remove any group that loses a child
+    this.objects.forEach(obj => {
+      if (obj.type === 'group' && !deletedIds.has(obj.id)) {
+        if (obj.children.some(id => deletedIds.has(id))) {
+          // Remove children from the group that are being deleted
+          obj.children = obj.children.filter(id => !deletedIds.has(id));
+          // If group has < 2 children, dissolve it
+          if (obj.children.length < 2) {
+            deletedIds.add(obj.id);
+          }
+        }
+      }
+    });
+
+    // Remove deleted objects
+    this.objects = this.objects.filter(obj => !deletedIds.has(obj.id));
 
     // Also remove any connectors that reference deleted objects
     this.objects = this.objects.filter(obj => {
       if (obj.type === 'connector') {
-        return !deletedIds.includes(obj.fromId) && !deletedIds.includes(obj.toId);
+        return !deletedIds.has(obj.fromId) && !deletedIds.has(obj.toId);
       }
       return true;
     });
 
     this.selectedObjects = [];
+    if (this.enteredGroup && deletedIds.has(this.enteredGroup.id)) {
+      this.enteredGroup = null;
+    }
     this.saveState();
     this.updateStatus();
     this.updateLayers();
@@ -911,6 +1347,90 @@ class HackerPad {
     if (this.selectedObjects.length > 0) {
       this.saveState();
     }
+    this.render();
+  }
+
+  // ============================================
+  // GROUPING
+  // ============================================
+
+  groupSelected() {
+    if (this.selectedObjects.length < 2) return;
+
+    // Don't allow grouping if any selected object is already in a group
+    if (this.selectedObjects.some(obj => this.findGroupForObject(obj))) return;
+
+    // Don't allow nesting groups
+    if (this.selectedObjects.some(obj => obj.type === 'group')) return;
+
+    // Filter out connectors
+    const groupable = this.selectedObjects.filter(obj => obj.type !== 'connector');
+    if (groupable.length < 2) return;
+
+    const childIds = groupable.map(obj => obj.id);
+
+    // Find the earliest position of children in the objects array
+    const firstChildIndex = Math.min(
+      ...childIds.map(id => this.objects.findIndex(o => o.id === id))
+    );
+
+    const group = {
+      type: 'group',
+      id: ++this.objectIdCounter,
+      children: childIds,
+      fillColor: '#1a1a2e',
+      fillEnabled: true,
+      opacity: 100,
+      padding: 10,
+      locked: false
+    };
+
+    // Insert group before its first child so background draws behind
+    this.objects.splice(firstChildIndex, 0, group);
+
+    this.selectedObjects = [group];
+    this.saveState();
+    this.updateStatus();
+    this.updateLayers();
+    this.render();
+  }
+
+  ungroupSelected() {
+    const groups = this.selectedObjects.filter(obj => obj.type === 'group' && !obj.locked);
+    if (groups.length === 0) return;
+
+    const newSelection = [];
+    groups.forEach(group => {
+      const children = this.getGroupChildren(group);
+      newSelection.push(...children);
+      this.objects = this.objects.filter(obj => obj !== group);
+    });
+
+    // Keep any non-group or locked-group selections
+    const remaining = this.selectedObjects.filter(obj => obj.type !== 'group' || obj.locked);
+    this.selectedObjects = [...remaining, ...newSelection];
+    this.enteredGroup = null;
+    this.saveState();
+    this.updateStatus();
+    this.updateLayers();
+    this.render();
+  }
+
+  toggleGroupLock() {
+    const groups = this.selectedObjects.filter(obj => obj.type === 'group');
+    if (groups.length === 0) return;
+
+    groups.forEach(group => {
+      group.locked = !group.locked;
+    });
+
+    // Exit entered group if it just got locked
+    if (this.enteredGroup && this.enteredGroup.locked) {
+      this.enteredGroup = null;
+    }
+
+    this.saveState();
+    this.updateLayers();
     this.render();
   }
 
@@ -1252,6 +1772,7 @@ class HackerPad {
         opacity: this.opacity
       });
 
+      this.selectTool('select');
       this.render();
     };
     img.src = dataUrl;
@@ -1271,6 +1792,11 @@ class HackerPad {
 
     // Draw all objects
     this.objects.forEach(obj => this.drawObject(obj));
+
+    // Draw entered group indicator
+    if (this.enteredGroup) {
+      this.drawEnteredGroupIndicator(this.enteredGroup);
+    }
 
     // Draw selection indicators
     this.selectedObjects.forEach(obj => this.drawSelectionIndicator(obj));
@@ -1305,8 +1831,56 @@ class HackerPad {
       case 'connector':
         this.drawConnector(obj);
         break;
+      case 'group':
+        this.drawGroup(obj);
+        break;
     }
 
+    ctx.restore();
+  }
+
+  drawGroup(obj) {
+    const bounds = this.getObjectBounds(obj);
+    const ctx = this.ctx;
+    const radius = 8;
+
+    if (obj.fillEnabled) {
+      ctx.beginPath();
+      ctx.roundRect(bounds.x, bounds.y, bounds.width, bounds.height, radius);
+      ctx.fillStyle = obj.fillColor;
+      ctx.fill();
+    }
+
+    // Draw lock indicator
+    if (obj.locked) {
+      const iconSize = 14;
+      const ix = bounds.x + bounds.width - iconSize - 4;
+      const iy = bounds.y + 4;
+      ctx.save();
+      ctx.globalAlpha = 0.5;
+      ctx.font = `${iconSize}px sans-serif`;
+      ctx.fillStyle = '#ff6b00';
+      ctx.fillText('\u{1F512}', ix, iy + iconSize);
+      ctx.restore();
+    }
+  }
+
+  drawEnteredGroupIndicator(group) {
+    const ctx = this.ctx;
+    const bounds = this.getObjectBounds(group);
+    const padding = 3 / this.scale;
+
+    ctx.save();
+    ctx.strokeStyle = '#ff6b00';
+    ctx.lineWidth = 2 / this.scale;
+    ctx.setLineDash([8 / this.scale, 4 / this.scale]);
+    ctx.globalAlpha = 0.6;
+    ctx.beginPath();
+    ctx.roundRect(
+      bounds.x - padding, bounds.y - padding,
+      bounds.width + padding * 2, bounds.height + padding * 2, 8
+    );
+    ctx.stroke();
     ctx.restore();
   }
 
@@ -1481,6 +2055,26 @@ class HackerPad {
       case 'image':
         return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
 
+      case 'group': {
+        const children = this.getGroupChildren(obj);
+        if (children.length === 0) return { x: 0, y: 0, width: 0, height: 0 };
+        let gMinX = Infinity, gMinY = Infinity, gMaxX = -Infinity, gMaxY = -Infinity;
+        children.forEach(child => {
+          const cb = this.getObjectBounds(child);
+          gMinX = Math.min(gMinX, cb.x);
+          gMinY = Math.min(gMinY, cb.y);
+          gMaxX = Math.max(gMaxX, cb.x + cb.width);
+          gMaxY = Math.max(gMaxY, cb.y + cb.height);
+        });
+        const gPad = obj.padding || 10;
+        return {
+          x: gMinX - gPad,
+          y: gMinY - gPad,
+          width: (gMaxX - gMinX) + gPad * 2,
+          height: (gMaxY - gMinY) + gPad * 2
+        };
+      }
+
       case 'connector': {
         // Calculate bounds from connected objects
         const connFromObj = this.objects.find(o => o.id === obj.fromId);
@@ -1600,6 +2194,9 @@ class HackerPad {
       if (clone.type === 'path') {
         clone.points = [...obj.points];
       }
+      if (clone.type === 'group') {
+        clone.children = [...obj.children];
+      }
       return clone;
     });
 
@@ -1641,6 +2238,7 @@ class HackerPad {
     });
 
     this.selectedObjects = [];
+    this.enteredGroup = null;
     this.updateStatus();
     this.updateLayers();
     this.render();
@@ -1703,7 +2301,12 @@ class HackerPad {
       return obj;
     });
 
+    // Ensure objectIdCounter is higher than any loaded ID
+    const maxId = Math.max(0, ...this.objects.map(o => o.id || 0));
+    this.objectIdCounter = Math.max(this.objectIdCounter, maxId);
+
     this.selectedObjects = [];
+    this.enteredGroup = null;
     this.saveState();
     this.updateStatus();
     this.updateLayers();
@@ -1797,6 +2400,9 @@ class HackerPad {
         }
         if (clone.type === 'path') {
           clone.points = [...obj.points];
+        }
+        if (clone.type === 'group') {
+          clone.children = [...obj.children];
         }
         return clone;
       })
@@ -1926,12 +2532,17 @@ class HackerPad {
       this.showRadialMenu(e.clientX, e.clientY);
     });
 
-    // Click on item to select tool
+    // Click on item to select tool or trigger action
     items.forEach(item => {
       item.addEventListener('click', (e) => {
         e.stopPropagation();
         const tool = item.dataset.tool;
-        this.selectTool(tool);
+        const action = item.dataset.action;
+        if (tool) {
+          this.selectTool(tool);
+        } else if (action) {
+          this.handleRadialAction(action);
+        }
         this.hideRadialMenu();
       });
     });
@@ -1973,9 +2584,23 @@ class HackerPad {
     menu.style.left = menuX + 'px';
     menu.style.top = menuY + 'px';
 
-    // Update active state
+    // Update active state for tools
+    const hasGroupSelected = this.selectedObjects.some(o => o.type === 'group');
+    const groupIsLocked = this.selectedObjects.some(o => o.type === 'group' && o.locked);
+
     items.forEach(item => {
-      item.classList.toggle('active', item.dataset.tool === this.currentTool);
+      if (item.dataset.tool) {
+        item.classList.toggle('active', item.dataset.tool === this.currentTool);
+      }
+      // Update lock button state
+      if (item.dataset.action === 'lock-group') {
+        item.classList.toggle('active', groupIsLocked);
+        item.style.opacity = hasGroupSelected ? '1' : '0.35';
+        const iconEl = item.querySelector('.radial-icon');
+        const labelEl = item.querySelector('.radial-label');
+        if (iconEl) iconEl.textContent = groupIsLocked ? '🔓' : '🔒';
+        if (labelEl) labelEl.textContent = groupIsLocked ? 'UNLOCK' : 'LOCK';
+      }
     });
 
     menu.classList.add('visible');
@@ -1984,6 +2609,14 @@ class HackerPad {
   hideRadialMenu() {
     const menu = document.getElementById('radial-menu');
     menu.classList.remove('visible');
+  }
+
+  handleRadialAction(action) {
+    switch (action) {
+      case 'lock-group':
+        this.toggleGroupLock();
+        break;
+    }
   }
 
   // ============================================
@@ -2109,6 +2742,38 @@ class HackerPad {
     document.getElementById('status-tool').textContent = `TOOL: ${this.currentTool.toUpperCase()}`;
     document.getElementById('status-objects').textContent = `OBJECTS: ${this.objects.length}`;
     document.getElementById('status-selected').textContent = `SELECTED: ${this.selectedObjects.length}`;
+    this.syncPropertiesPanel();
+  }
+
+  syncPropertiesPanel() {
+    if (this.selectedObjects.length !== 1) return;
+    const obj = this.selectedObjects[0];
+
+    // Sync fill color and fill enabled for any object that has them
+    if (obj.fillColor !== undefined) {
+      document.getElementById('fillColor').value = obj.fillColor;
+      this.fillColor = obj.fillColor;
+    }
+    if (obj.fillEnabled !== undefined) {
+      document.getElementById('fillEnabled').checked = obj.fillEnabled;
+      this.fillEnabled = obj.fillEnabled;
+    }
+    if (obj.strokeColor !== undefined) {
+      document.getElementById('strokeColor').value = obj.strokeColor;
+      this.strokeColor = obj.strokeColor;
+    }
+    if (obj.strokeWidth !== undefined) {
+      document.getElementById('strokeWidth').value = obj.strokeWidth;
+      this.strokeWidth = obj.strokeWidth;
+    }
+    if (obj.fontSize !== undefined) {
+      document.getElementById('fontSize').value = obj.fontSize;
+      this.fontSize = obj.fontSize;
+    }
+    if (obj.opacity !== undefined) {
+      document.getElementById('opacity').value = obj.opacity;
+      this.opacity = obj.opacity;
+    }
   }
 
   updateLayers() {
@@ -2122,7 +2787,8 @@ class HackerPad {
       ellipse: '◯',
       text: 'A',
       image: '⌼',
-      connector: '→'
+      connector: '→',
+      group: '⊞'
     };
 
     if (this.objects.length === 0) {
@@ -2130,9 +2796,22 @@ class HackerPad {
       return;
     }
 
-    [...this.objects].reverse().forEach((obj, index) => {
+    // Build set of child IDs to skip in main loop (shown under their group)
+    const childIds = new Set();
+    this.objects.forEach(obj => {
+      if (obj.type === 'group') {
+        obj.children.forEach(id => childIds.add(id));
+      }
+    });
+
+    const createLayerItem = (obj, isChild) => {
       const item = document.createElement('div');
       item.className = 'layer-item';
+      if (isChild) item.classList.add('layer-child');
+      if (obj.type === 'group') {
+        item.classList.add('group-item');
+        if (obj.locked) item.classList.add('locked');
+      }
       if (this.selectedObjects.includes(obj)) {
         item.classList.add('selected');
       }
@@ -2155,13 +2834,14 @@ class HackerPad {
         `${Math.round(bounds.width)} × ${Math.round(bounds.height)}` : '';
 
       switch (obj.type) {
-        case 'text':
+        case 'text': {
           const textPreview = obj.text.length > 20 ? obj.text.substring(0, 20) + '...' : obj.text;
           details = `
             <span class="layer-text">"${textPreview}"</span>
             <span class="layer-pos">${posInfo}</span>
           `;
           break;
+        }
         case 'image':
           details = `<span class="layer-pos">${posInfo} · ${sizeInfo}</span>`;
           break;
@@ -2173,8 +2853,23 @@ class HackerPad {
           details = `<span class="layer-pos">${fromName} → ${toName}</span>`;
           break;
         }
+        case 'group': {
+          const lockLabel = obj.locked ? '🔒' : '';
+          details = `<span class="layer-pos">${obj.children.length} children ${lockLabel} · ${sizeInfo}</span>`;
+          break;
+        }
         default:
           details = `<span class="layer-pos">${posInfo}${sizeInfo ? ' · ' + sizeInfo : ''}</span>`;
+      }
+
+      let groupBtns = '';
+      if (obj.type === 'group') {
+        const lockIcon = obj.locked ? '🔓' : '🔒';
+        const lockTitle = obj.locked ? 'Unlock group' : 'Lock group';
+        groupBtns = `
+          <button class="layer-action-btn lock-btn${obj.locked ? ' locked' : ''}" title="${lockTitle}">${lockIcon}</button>
+          <button class="layer-action-btn ungroup-btn" title="Ungroup (Ctrl+Shift+G)"${obj.locked ? ' disabled' : ''}>⊟</button>
+        `;
       }
 
       item.innerHTML = `
@@ -2182,6 +2877,7 @@ class HackerPad {
           <span class="layer-icon">${icons[obj.type] || '?'}</span>
           <span class="layer-name">${obj.type.toUpperCase()} ${obj.id}</span>
           <div class="layer-actions">
+            ${groupBtns}
             <button class="layer-action-btn focus-btn" title="Focus on object">◎</button>
             <button class="layer-action-btn delete-btn" title="Delete">×</button>
           </div>
@@ -2194,7 +2890,6 @@ class HackerPad {
         if (e.target.closest('.layer-actions')) return;
 
         if (e.shiftKey) {
-          // Shift+click: just add to selection, don't pan
           if (!this.selectedObjects.includes(obj)) {
             this.selectedObjects.push(obj);
           }
@@ -2202,12 +2897,11 @@ class HackerPad {
           this.updateLayers();
           this.render();
         } else {
-          // Regular click: focus and select
           this.focusOnObject(obj);
         }
       });
 
-      // Focus button - pan to object
+      // Focus button
       const focusBtn = item.querySelector('.focus-btn');
       focusBtn.addEventListener('click', (e) => {
         e.stopPropagation();
@@ -2218,22 +2912,48 @@ class HackerPad {
       const deleteBtn = item.querySelector('.delete-btn');
       deleteBtn.addEventListener('click', (e) => {
         e.stopPropagation();
-        this.objects = this.objects.filter(o => o !== obj);
-        // Also remove connectors referencing this object
-        this.objects = this.objects.filter(o => {
-          if (o.type === 'connector') {
-            return o.fromId !== obj.id && o.toId !== obj.id;
-          }
-          return true;
-        });
-        this.selectedObjects = this.selectedObjects.filter(o => o !== obj);
-        this.saveState();
-        this.updateStatus();
-        this.updateLayers();
-        this.render();
+        this.selectedObjects = [obj];
+        this.deleteSelected();
       });
 
+      // Lock button
+      const lockBtnEl = item.querySelector('.lock-btn');
+      if (lockBtnEl) {
+        lockBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.selectedObjects = [obj];
+          this.toggleGroupLock();
+        });
+      }
+
+      // Ungroup button
+      const ungroupBtnEl = item.querySelector('.ungroup-btn');
+      if (ungroupBtnEl) {
+        ungroupBtnEl.addEventListener('click', (e) => {
+          e.stopPropagation();
+          this.selectedObjects = [obj];
+          this.ungroupSelected();
+        });
+      }
+
+      return item;
+    };
+
+    [...this.objects].reverse().forEach(obj => {
+      // Skip children of groups (shown nested under the group)
+      if (childIds.has(obj.id)) return;
+
+      const item = createLayerItem(obj, false);
       layersList.appendChild(item);
+
+      // If it's a group, show its children indented below
+      if (obj.type === 'group') {
+        const children = this.getGroupChildren(obj);
+        children.forEach(child => {
+          const childItem = createLayerItem(child, true);
+          layersList.appendChild(childItem);
+        });
+      }
     });
   }
 

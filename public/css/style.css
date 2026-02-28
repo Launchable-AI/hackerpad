@@ -469,6 +469,51 @@ input[type="range"]::-webkit-slider-thumb {
   color: var(--text-secondary);
 }
 
+/* Group items in component tree */
+.layer-item.group-item {
+  border-left: 3px solid var(--neon-cyan);
+}
+
+.layer-item.group-item.selected {
+  border-left-color: var(--neon-green);
+}
+
+.layer-item.layer-child {
+  margin-left: 16px;
+  border-left: 2px solid var(--border-color);
+  opacity: 0.85;
+}
+
+.layer-item.layer-child.selected {
+  border-left-color: var(--neon-green);
+  opacity: 1;
+}
+
+.layer-action-btn.lock-btn:hover {
+  border-color: var(--neon-orange);
+  color: var(--neon-orange);
+}
+
+.layer-action-btn.lock-btn.locked {
+  border-color: var(--neon-orange);
+  color: var(--neon-orange);
+  background: rgba(255, 107, 0, 0.1);
+}
+
+.layer-item.group-item.locked {
+  border-left-color: var(--neon-orange);
+}
+
+.layer-action-btn.ungroup-btn:hover {
+  border-color: var(--neon-orange);
+  color: var(--neon-orange);
+}
+
+.layer-action-btn[disabled] {
+  opacity: 0.3;
+  pointer-events: none;
+}
+
 .component-tree-empty {
   text-align: center;
   padding: 20px;
