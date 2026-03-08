@@ -422,6 +422,7 @@ class HackerPad {
     this.bindShapesPanel();
     this.saveState();
     this.render();
+    this.initEmbeddedMode();
 
     console.log('%c[HACKERPAD] System initialized', 'color: #00ff9d');
   }
@@ -2785,6 +2786,14 @@ class HackerPad {
       this.history.shift();
       this.historyIndex--;
     }
+
+    // Notify parent when embedded
+    if (this.embedded && window.parent !== window) {
+      window.parent.postMessage({
+        type: 'hackerpad:changed',
+        objects: state
+      }, '*');
+    }
   }
 
   undo() {
@@ -2892,10 +2901,10 @@ class HackerPad {
     console.log('%c[LOAD] Canvas loaded successfully', 'color: #00ff9d');
   }
 
-  clearAll() {
+  clearAll(skipConfirm = false) {
     if (this.objects.length === 0) return;
 
-    if (confirm('⚠ CLEAR ALL OBJECTS?')) {
+    if (skipConfirm || confirm('⚠ CLEAR ALL OBJECTS?')) {
       this.objects = [];
       this.selectedObjects = [];
       this.saveState();
@@ -3557,6 +3566,66 @@ class HackerPad {
       const screenPos = this.canvasToScreen(obj.x, obj.y);
       this.editTextObject(obj, screenPos.x, screenPos.y);
     }
+  }
+
+  // ============================================
+  // EMBEDDED MODE (postMessage API)
+  // ============================================
+
+  initEmbeddedMode() {
+    const params = new URLSearchParams(window.location.search);
+    this.embedded = params.get('embedded') === 'true' || window.parent !== window;
+
+    if (!this.embedded) return;
+
+    document.body.classList.add('embedded');
+    this.initPostMessageAPI();
+
+    // Signal readiness to parent
+    window.parent.postMessage({ type: 'hackerpad:ready' }, '*');
+  }
+
+  initPostMessageAPI() {
+    window.addEventListener('message', (e) => {
+      const { type, payload } = e.data || {};
+
+      switch (type) {
+        case 'hackerpad:load':
+          if (payload) {
+            // Accept both { objects: [...] } and raw arrays
+            const data = Array.isArray(payload)
+              ? { objects: payload }
+              : payload;
+            if (data.objects) {
+              this.loadData(data);
+            }
+          }
+          break;
+
+        case 'hackerpad:getObjects': {
+          const objects = this.objects.map(obj => {
+            const clone = { ...obj };
+            if (clone.type === 'image') delete clone.imageElement;
+            return clone;
+          });
+          window.parent.postMessage({
+            type: 'hackerpad:objects',
+            objects
+          }, '*');
+          break;
+        }
+
+        case 'hackerpad:clear':
+          this.clearAll(true);
+          break;
+
+        case 'hackerpad:setTheme':
+          if (payload) {
+            this.setTheme(payload);
+          }
+          break;
+      }
+    });
   }
 }
 
