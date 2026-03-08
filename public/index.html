@@ -5,6 +5,16 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>HACKERPAD</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <script>
+    // Anti-FOUC: set theme before CSS loads to prevent flash of wrong theme
+    (function() {
+      var saved = localStorage.getItem('hackerpad-theme');
+      if (!saved) {
+        saved = window.matchMedia('(prefers-color-scheme: light)').matches ? 'light' : 'dark';
+      }
+      document.documentElement.setAttribute('data-theme', saved);
+    })();
+  </script>
   <link rel="stylesheet" href="/css/style.css">
   <link href="https://fonts.googleapis.com/css2?family=Share+Tech+Mono&family=Orbitron:wght@400;700&display=swap" rel="stylesheet">
   <!-- Privacy-friendly analytics by Plausible -->
@@ -85,6 +95,7 @@
         <button class="action-btn" id="projectsBtn" title="Projects">☰</button>
         <button class="action-btn" id="saveBtn" title="Export File [Ctrl+S]">⬇</button>
         <button class="action-btn" id="loadBtn" title="Import File">⬆</button>
+        <button class="action-btn" id="themeToggleBtn" title="Toggle Theme">☀</button>
       </div>
 
       <div class="toolbar-section zoom">

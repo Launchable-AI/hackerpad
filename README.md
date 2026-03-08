@@ -37,6 +37,7 @@ https://github.com/user-attachments/assets/22dbc984-a18c-4719-9208-51f1fe7bae2d
 - **Color palette** - Save up to 10 colors for quick access (persisted to localStorage)
 - **Component tree** - View and manage all objects on the canvas
 - **Zoom controls** - Zoom in/out with mouse wheel or buttons
+- **Light/Dark theme** - Toggle between dark (cyberpunk) and light mode via the toolbar button. Defaults to system preference, persists your choice to localStorage
 
 ### Text Editing
 - Double-click text to edit in place

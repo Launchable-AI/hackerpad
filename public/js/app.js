@@ -1,6 +1,34 @@
 // HACKERPAD - Hackerpunk Canvas Application
 // =============================================
 
+// Theme color map for canvas-rendered elements
+const THEME_COLORS = {
+  dark: {
+    selectionStroke: '#00ffff',
+    selectionHandle: '#00ff9d',
+    marqueeStroke: '#00ffff',
+    marqueeFill: 'rgba(0, 255, 255, 0.08)',
+    connectorHighlight: '#00ff9d',
+    enteredGroupStroke: '#ff6b00',
+    lockIcon: '#ff6b00',
+    defaultStroke: '#00ff9d',
+    defaultFill: '#0a0a0f',
+    defaultGroupFill: '#1a1a2e',
+  },
+  light: {
+    selectionStroke: '#0088aa',
+    selectionHandle: '#00995e',
+    marqueeStroke: '#0088aa',
+    marqueeFill: 'rgba(0, 136, 170, 0.1)',
+    connectorHighlight: '#00995e',
+    enteredGroupStroke: '#cc5500',
+    lockIcon: '#cc5500',
+    defaultStroke: '#1a1a2a',
+    defaultFill: '#f0f0f5',
+    defaultGroupFill: '#e0e0ea',
+  }
+};
+
 // Pre-built shape library
 const SHAPE_LIBRARY = {
   'arrow-right': {
@@ -324,7 +352,65 @@ class HackerPad {
     this.init();
   }
 
+  // ============================================
+  // THEME
+  // ============================================
+
+  getThemeColor(key) {
+    const theme = document.documentElement.getAttribute('data-theme') || 'dark';
+    return THEME_COLORS[theme]?.[key] ?? THEME_COLORS.dark[key];
+  }
+
+  initTheme() {
+    this.currentTheme = document.documentElement.getAttribute('data-theme') || 'dark';
+
+    // Update default colors to match theme
+    this.strokeColor = this.getThemeColor('defaultStroke');
+    this.fillColor = this.getThemeColor('defaultFill');
+    document.getElementById('strokeColor').value = this.strokeColor;
+    document.getElementById('fillColor').value = this.fillColor;
+
+    // Update toggle button icon
+    this.updateThemeToggleIcon();
+
+    // Listen for system preference changes (only if user hasn't manually overridden)
+    window.matchMedia('(prefers-color-scheme: light)').addEventListener('change', (e) => {
+      if (!localStorage.getItem('hackerpad-theme')) {
+        this.setTheme(e.matches ? 'light' : 'dark');
+      }
+    });
+  }
+
+  setTheme(theme) {
+    this.currentTheme = theme;
+    document.documentElement.setAttribute('data-theme', theme);
+
+    // Update default colors for new objects
+    this.strokeColor = this.getThemeColor('defaultStroke');
+    this.fillColor = this.getThemeColor('defaultFill');
+    document.getElementById('strokeColor').value = this.strokeColor;
+    document.getElementById('fillColor').value = this.fillColor;
+
+    this.updateThemeToggleIcon();
+    this.render();
+  }
+
+  toggleTheme() {
+    const newTheme = this.currentTheme === 'dark' ? 'light' : 'dark';
+    localStorage.setItem('hackerpad-theme', newTheme);
+    this.setTheme(newTheme);
+  }
+
+  updateThemeToggleIcon() {
+    const btn = document.getElementById('themeToggleBtn');
+    if (btn) {
+      btn.textContent = this.currentTheme === 'dark' ? '\u2600' : '\u263D';
+      btn.title = this.currentTheme === 'dark' ? 'Switch to Light Mode' : 'Switch to Dark Mode';
+    }
+  }
+
   init() {
+    this.initTheme();
     this.setupCanvas();
     this.bindEvents();
     this.bindToolbar();
@@ -434,6 +520,7 @@ class HackerPad {
     document.getElementById('loadBtn').addEventListener('click', () => {
       document.getElementById('loadInput').click();
     });
+    document.getElementById('themeToggleBtn').addEventListener('click', () => this.toggleTheme());
 
     // Zoom buttons
     document.getElementById('zoomIn').addEventListener('click', () => this.zoom(1.2));
@@ -1608,10 +1695,10 @@ class HackerPad {
     const w = Math.abs(this.marqueeCurrent.x - this.marqueeStart.x);
     const h = Math.abs(this.marqueeCurrent.y - this.marqueeStart.y);
 
-    ctx.fillStyle = 'rgba(0, 255, 255, 0.08)';
+    ctx.fillStyle = this.getThemeColor('marqueeFill');
     ctx.fillRect(x1, y1, w, h);
 
-    ctx.strokeStyle = '#00ffff';
+    ctx.strokeStyle = this.getThemeColor('marqueeStroke');
     ctx.lineWidth = 1.5 / this.scale;
     ctx.setLineDash([6 / this.scale, 4 / this.scale]);
     ctx.strokeRect(x1, y1, w, h);
@@ -1766,7 +1853,7 @@ class HackerPad {
       type: 'group',
       id: ++this.objectIdCounter,
       children: childIds,
-      fillColor: '#1a1a2e',
+      fillColor: this.getThemeColor('defaultGroupFill'),
       fillEnabled: true,
       opacity: 100,
       padding: 10,
@@ -1989,7 +2076,7 @@ class HackerPad {
       };
 
       // Highlight target
-      ctx.strokeStyle = '#00ff9d';
+      ctx.strokeStyle = this.getThemeColor('connectorHighlight');
       ctx.lineWidth = 2 / this.scale;
       ctx.setLineDash([5 / this.scale, 5 / this.scale]);
       ctx.strokeRect(toBounds.x - 5, toBounds.y - 5, toBounds.width + 10, toBounds.height + 10);
@@ -2346,7 +2433,7 @@ class HackerPad {
       ctx.save();
       ctx.globalAlpha = 0.5;
       ctx.font = `${iconSize}px sans-serif`;
-      ctx.fillStyle = '#ff6b00';
+      ctx.fillStyle = this.getThemeColor('lockIcon');
       ctx.fillText('\u{1F512}', ix, iy + iconSize);
       ctx.restore();
     }
@@ -2358,7 +2445,7 @@ class HackerPad {
     const padding = 3 / this.scale;
 
     ctx.save();
-    ctx.strokeStyle = '#ff6b00';
+    ctx.strokeStyle = this.getThemeColor('enteredGroupStroke');
     ctx.lineWidth = 2 / this.scale;
     ctx.setLineDash([8 / this.scale, 4 / this.scale]);
     ctx.globalAlpha = 0.6;
@@ -2467,7 +2554,7 @@ class HackerPad {
     const ctx = this.ctx;
     ctx.save();
 
-    ctx.strokeStyle = '#00ffff';
+    ctx.strokeStyle = this.getThemeColor('selectionStroke');
     ctx.lineWidth = 2 / this.scale;
     ctx.setLineDash([5 / this.scale, 5 / this.scale]);
 
@@ -2483,7 +2570,7 @@ class HackerPad {
 
     // Draw resize handles
     ctx.setLineDash([]);
-    ctx.fillStyle = '#00ff9d';
+    ctx.fillStyle = this.getThemeColor('selectionHandle');
     const handleSize = 8 / this.scale;
 
     const handles = [
