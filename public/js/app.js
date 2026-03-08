@@ -1,6 +1,247 @@
 // HACKERPAD - Hackerpunk Canvas Application
 // =============================================
 
+// Pre-built shape library
+const SHAPE_LIBRARY = {
+  'arrow-right': {
+    name: 'Arrow Right', icon: '→', category: 'Arrows',
+    defaultWidth: 120, defaultHeight: 60,
+    draw(ctx, x, y, w, h) {
+      const shaft = h * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x, y + (h - shaft) / 2);
+      ctx.lineTo(x + w * 0.6, y + (h - shaft) / 2);
+      ctx.lineTo(x + w * 0.6, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w * 0.6, y + h);
+      ctx.lineTo(x + w * 0.6, y + (h + shaft) / 2);
+      ctx.lineTo(x, y + (h + shaft) / 2);
+      ctx.closePath();
+    }
+  },
+  'arrow-left': {
+    name: 'Arrow Left', icon: '←', category: 'Arrows',
+    defaultWidth: 120, defaultHeight: 60,
+    draw(ctx, x, y, w, h) {
+      const shaft = h * 0.3;
+      ctx.beginPath();
+      ctx.moveTo(x + w, y + (h - shaft) / 2);
+      ctx.lineTo(x + w * 0.4, y + (h - shaft) / 2);
+      ctx.lineTo(x + w * 0.4, y);
+      ctx.lineTo(x, y + h / 2);
+      ctx.lineTo(x + w * 0.4, y + h);
+      ctx.lineTo(x + w * 0.4, y + (h + shaft) / 2);
+      ctx.lineTo(x + w, y + (h + shaft) / 2);
+      ctx.closePath();
+    }
+  },
+  'arrow-bidirectional': {
+    name: 'Bidirectional Arrow', icon: '↔', category: 'Arrows',
+    defaultWidth: 140, defaultHeight: 60,
+    draw(ctx, x, y, w, h) {
+      const shaft = h * 0.3;
+      const head = w * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(x, y + h / 2);
+      ctx.lineTo(x + head, y);
+      ctx.lineTo(x + head, y + (h - shaft) / 2);
+      ctx.lineTo(x + w - head, y + (h - shaft) / 2);
+      ctx.lineTo(x + w - head, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w - head, y + h);
+      ctx.lineTo(x + w - head, y + (h + shaft) / 2);
+      ctx.lineTo(x + head, y + (h + shaft) / 2);
+      ctx.lineTo(x + head, y + h);
+      ctx.closePath();
+    }
+  },
+  'database': {
+    name: 'Database', icon: '⛁', category: 'Infrastructure',
+    defaultWidth: 80, defaultHeight: 100,
+    draw(ctx, x, y, w, h) {
+      const ry = h * 0.12;
+      // Bottom ellipse
+      ctx.beginPath();
+      ctx.ellipse(x + w / 2, y + h - ry, w / 2, ry, 0, 0, Math.PI * 2);
+      ctx.moveTo(x + w, y + h - ry);
+      ctx.lineTo(x + w, y + ry);
+      ctx.ellipse(x + w / 2, y + ry, w / 2, ry, 0, 0, Math.PI, true);
+      ctx.lineTo(x, y + h - ry);
+      // Top ellipse
+      ctx.moveTo(x + w, y + ry);
+      ctx.ellipse(x + w / 2, y + ry, w / 2, ry, 0, 0, Math.PI * 2);
+    }
+  },
+  'server': {
+    name: 'Server', icon: '▦', category: 'Infrastructure',
+    defaultWidth: 80, defaultHeight: 110,
+    draw(ctx, x, y, w, h) {
+      const slotH = h / 3;
+      const r = 4;
+      for (let i = 0; i < 3; i++) {
+        const sy = y + i * slotH;
+        ctx.moveTo(x + r, sy);
+        ctx.arcTo(x + w, sy, x + w, sy + slotH, r);
+        ctx.arcTo(x + w, sy + slotH, x, sy + slotH, r);
+        ctx.arcTo(x, sy + slotH, x, sy, r);
+        ctx.arcTo(x, sy, x + w, sy, r);
+        // Drive indicators
+        ctx.moveTo(x + w - 16, sy + slotH / 2 - 3);
+        ctx.arc(x + w - 13, sy + slotH / 2, 3, 0, Math.PI * 2);
+      }
+    }
+  },
+  'cloud': {
+    name: 'Cloud', icon: '☁', category: 'Infrastructure',
+    defaultWidth: 120, defaultHeight: 80,
+    draw(ctx, x, y, w, h) {
+      ctx.beginPath();
+      ctx.moveTo(x + w * 0.25, y + h * 0.65);
+      ctx.arc(x + w * 0.25, y + h * 0.52, w * 0.18, Math.PI * 0.7, Math.PI * 1.9);
+      ctx.arc(x + w * 0.42, y + h * 0.28, w * 0.2, Math.PI * 1.1, Math.PI * 1.85);
+      ctx.arc(x + w * 0.65, y + h * 0.25, w * 0.2, Math.PI * 1.2, Math.PI * 0.1);
+      ctx.arc(x + w * 0.78, y + h * 0.45, w * 0.17, Math.PI * 1.5, Math.PI * 0.4);
+      ctx.lineTo(x + w * 0.25, y + h * 0.65);
+      ctx.closePath();
+    }
+  },
+  'terminal': {
+    name: 'Terminal', icon: '>_', category: 'Development',
+    defaultWidth: 120, defaultHeight: 90,
+    draw(ctx, x, y, w, h) {
+      const r = 6;
+      // Outer rounded rect
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      // Title bar line
+      ctx.moveTo(x, y + h * 0.22);
+      ctx.lineTo(x + w, y + h * 0.22);
+      // Prompt chevron >_
+      ctx.moveTo(x + w * 0.12, y + h * 0.42);
+      ctx.lineTo(x + w * 0.28, y + h * 0.55);
+      ctx.lineTo(x + w * 0.12, y + h * 0.68);
+      // Cursor line
+      ctx.moveTo(x + w * 0.35, y + h * 0.68);
+      ctx.lineTo(x + w * 0.55, y + h * 0.68);
+    }
+  },
+  'code-brackets': {
+    name: 'Code', icon: '{ }', category: 'Development',
+    defaultWidth: 100, defaultHeight: 90,
+    draw(ctx, x, y, w, h) {
+      const r = 6;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      // Left bracket {
+      ctx.moveTo(x + w * 0.35, y + h * 0.2);
+      ctx.quadraticCurveTo(x + w * 0.25, y + h * 0.2, x + w * 0.25, y + h * 0.35);
+      ctx.quadraticCurveTo(x + w * 0.25, y + h * 0.45, x + w * 0.18, y + h * 0.5);
+      ctx.quadraticCurveTo(x + w * 0.25, y + h * 0.55, x + w * 0.25, y + h * 0.65);
+      ctx.quadraticCurveTo(x + w * 0.25, y + h * 0.8, x + w * 0.35, y + h * 0.8);
+      // Right bracket }
+      ctx.moveTo(x + w * 0.65, y + h * 0.2);
+      ctx.quadraticCurveTo(x + w * 0.75, y + h * 0.2, x + w * 0.75, y + h * 0.35);
+      ctx.quadraticCurveTo(x + w * 0.75, y + h * 0.45, x + w * 0.82, y + h * 0.5);
+      ctx.quadraticCurveTo(x + w * 0.75, y + h * 0.55, x + w * 0.75, y + h * 0.65);
+      ctx.quadraticCurveTo(x + w * 0.75, y + h * 0.8, x + w * 0.65, y + h * 0.8);
+    }
+  },
+  'api-box': {
+    name: 'API', icon: '⬡', category: 'Development',
+    defaultWidth: 100, defaultHeight: 70,
+    draw(ctx, x, y, w, h) {
+      const r = 6;
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, h, r);
+      // Connection dots on sides
+      ctx.moveTo(x - 5, y + h / 2);
+      ctx.arc(x, y + h / 2, 5, 0, Math.PI * 2);
+      ctx.moveTo(x + w + 5, y + h / 2);
+      ctx.arc(x + w, y + h / 2, 5, 0, Math.PI * 2);
+    }
+  },
+  'laptop': {
+    name: 'Laptop', icon: '💻', category: 'Devices',
+    defaultWidth: 120, defaultHeight: 90,
+    draw(ctx, x, y, w, h) {
+      const screenH = h * 0.7;
+      const r = 4;
+      // Screen
+      ctx.beginPath();
+      ctx.roundRect(x + w * 0.1, y, w * 0.8, screenH, r);
+      // Base
+      ctx.moveTo(x, y + screenH);
+      ctx.lineTo(x + w, y + screenH);
+      ctx.lineTo(x + w * 0.95, y + h);
+      ctx.lineTo(x + w * 0.05, y + h);
+      ctx.closePath();
+    }
+  },
+  'monitor': {
+    name: 'Monitor', icon: '🖥', category: 'Devices',
+    defaultWidth: 110, defaultHeight: 100,
+    draw(ctx, x, y, w, h) {
+      const screenH = h * 0.68;
+      const r = 4;
+      // Screen
+      ctx.beginPath();
+      ctx.roundRect(x, y, w, screenH, r);
+      // Stand
+      ctx.moveTo(x + w * 0.38, y + screenH);
+      ctx.lineTo(x + w * 0.62, y + screenH);
+      ctx.lineTo(x + w * 0.62, y + h * 0.88);
+      ctx.lineTo(x + w * 0.38, y + h * 0.88);
+      ctx.closePath();
+      // Base
+      ctx.moveTo(x + w * 0.25, y + h * 0.88);
+      ctx.lineTo(x + w * 0.75, y + h * 0.88);
+      ctx.lineTo(x + w * 0.75, y + h);
+      ctx.lineTo(x + w * 0.25, y + h);
+      ctx.closePath();
+    }
+  },
+  'diamond': {
+    name: 'Decision', icon: '◇', category: 'Flowchart',
+    defaultWidth: 100, defaultHeight: 100,
+    draw(ctx, x, y, w, h) {
+      ctx.beginPath();
+      ctx.moveTo(x + w / 2, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w / 2, y + h);
+      ctx.lineTo(x, y + h / 2);
+      ctx.closePath();
+    }
+  },
+  'hexagon': {
+    name: 'Hexagon', icon: '⬡', category: 'Flowchart',
+    defaultWidth: 110, defaultHeight: 100,
+    draw(ctx, x, y, w, h) {
+      const inset = w * 0.25;
+      ctx.beginPath();
+      ctx.moveTo(x + inset, y);
+      ctx.lineTo(x + w - inset, y);
+      ctx.lineTo(x + w, y + h / 2);
+      ctx.lineTo(x + w - inset, y + h);
+      ctx.lineTo(x + inset, y + h);
+      ctx.lineTo(x, y + h / 2);
+      ctx.closePath();
+    }
+  },
+  'parallelogram': {
+    name: 'I/O', icon: '▱', category: 'Flowchart',
+    defaultWidth: 120, defaultHeight: 70,
+    draw(ctx, x, y, w, h) {
+      const skew = w * 0.2;
+      ctx.beginPath();
+      ctx.moveTo(x + skew, y);
+      ctx.lineTo(x + w, y);
+      ctx.lineTo(x + w - skew, y + h);
+      ctx.lineTo(x, y + h);
+      ctx.closePath();
+    }
+  }
+};
+
 class HackerPad {
   constructor() {
     // Canvas setup
@@ -70,6 +311,15 @@ class HackerPad {
     // Group editing state
     this.enteredGroup = null;  // Currently "entered" group for editing children
 
+    // Marquee selection state
+    this.isMarqueeSelecting = false;
+    this.marqueeStart = null;
+    this.marqueeCurrent = null;
+
+    // Shape tool state
+    this.pendingShapeType = null;
+    this.shapePanelVisible = false;
+
     // Initialize
     this.init();
   }
@@ -83,6 +333,7 @@ class HackerPad {
     this.bindProjectsDialog();
     this.bindRadialMenu();
     this.bindColorPalette();
+    this.bindShapesPanel();
     this.saveState();
     this.render();
 
@@ -170,14 +421,7 @@ class HackerPad {
     // Tool buttons
     document.querySelectorAll('.tool-btn').forEach(btn => {
       btn.addEventListener('click', () => {
-        document.querySelectorAll('.tool-btn').forEach(b => b.classList.remove('active'));
-        btn.classList.add('active');
-        this.currentTool = btn.dataset.tool;
-        this.updateStatus();
-
-        if (this.currentTool === 'image') {
-          document.getElementById('imageInput').click();
-        }
+        this.selectTool(btn.dataset.tool);
       });
     });
 
@@ -246,11 +490,24 @@ class HackerPad {
           case 't': this.selectTool('text'); break;
           case 'i': this.selectTool('image'); break;
           case 'c': this.selectTool('connect'); break;
+          case 'p': this.selectTool('shape'); break;
           case 'delete':
           case 'backspace':
             this.deleteSelected();
             break;
           case 'escape':
+            if (this.isMarqueeSelecting) {
+              this.isMarqueeSelecting = false;
+              this.marqueeStart = null;
+              this.marqueeCurrent = null;
+              this.render();
+              break;
+            }
+            if (this.pendingShapeType) {
+              this.pendingShapeType = null;
+              this.selectTool('select');
+              break;
+            }
             if (this.enteredGroup) {
               this.enteredGroup = null;
             }
@@ -311,6 +568,21 @@ class HackerPad {
 
     if (tool === 'image') {
       document.getElementById('imageInput').click();
+    }
+
+    // Shape tool: show panel if no pending shape, hide if switching away
+    if (tool === 'shape') {
+      if (!this.pendingShapeType) {
+        this.showShapesPanel();
+      }
+    } else {
+      this.hideShapesPanel();
+      this.pendingShapeType = null;
+    }
+
+    // Set crosshair cursor when shape is pending
+    if (tool === 'shape' && this.pendingShapeType) {
+      this.canvas.style.cursor = 'crosshair';
     }
   }
 
@@ -380,6 +652,13 @@ class HackerPad {
       case 'connect':
         this.handleConnectDown(x, y);
         break;
+      case 'shape':
+        if (this.pendingShapeType) {
+          this.placeShape(x, y);
+        } else {
+          this.showShapesPanel();
+        }
+        break;
     }
   }
 
@@ -394,7 +673,7 @@ class HackerPad {
     document.getElementById('mouseY').textContent = `Y: ${Math.round(y)}`;
 
     // Update cursor for resize handles
-    if (this.currentTool === 'select' && !this.isDragging && !this.isResizing && !this.isPanning) {
+    if (this.currentTool === 'select' && !this.isDragging && !this.isResizing && !this.isPanning && !this.isMarqueeSelecting) {
       const handleHit = this.findResizeHandle(x, y);
       if (handleHit) {
         const cursors = {
@@ -434,6 +713,13 @@ class HackerPad {
       this.selectedObjects.forEach(obj => this.applyDrag(obj, dx, dy));
 
       this.render();
+      return;
+    }
+
+    if (this.isMarqueeSelecting) {
+      this.marqueeCurrent = { x, y };
+      this.render();
+      this.drawMarqueeRect();
       return;
     }
 
@@ -484,6 +770,11 @@ class HackerPad {
       this.selectedObjects.forEach(obj => this.cleanupDrag(obj));
       this.saveState();
       this.render();
+      return;
+    }
+
+    if (this.isMarqueeSelecting) {
+      this.finalizeMarqueeSelection(e);
       return;
     }
 
@@ -874,6 +1165,10 @@ class HackerPad {
         this.selectedObjects = [];
         this.enteredGroup = null;
       }
+      // Start marquee selection
+      this.isMarqueeSelecting = true;
+      this.marqueeStart = { x, y };
+      this.marqueeCurrent = { x, y };
     }
 
     this.updateStatus();
@@ -908,7 +1203,7 @@ class HackerPad {
   }
 
   isResizable(obj) {
-    return ['rect', 'image', 'ellipse', 'text', 'group'].includes(obj.type);
+    return ['rect', 'image', 'ellipse', 'text', 'group', 'shape'].includes(obj.type);
   }
 
   handleResize(x, y) {
@@ -926,7 +1221,7 @@ class HackerPad {
     } else if (obj.type === 'text') {
       this.handleTextResize(dx, dy);
     } else {
-      // rect, image
+      // rect, image, shape
       switch (this.resizeHandle) {
         case 'se':
           obj.width = Math.max(minSize, start.width + dx);
@@ -1076,6 +1371,7 @@ class HackerPad {
       switch (child.type) {
         case 'rect':
         case 'image':
+        case 'shape':
           child.x = newOriginX + (cs.x - originX) * scaleX;
           child.y = newOriginY + (cs.y - originY) * scaleY;
           child.width = cs.width * scaleX;
@@ -1166,6 +1462,10 @@ class HackerPad {
                y >= obj.y - margin && y <= obj.y + textHeight + margin;
 
       case 'image':
+        return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
+               y >= obj.y - margin && y <= obj.y + obj.height + margin;
+
+      case 'shape':
         return x >= obj.x - margin && x <= obj.x + obj.width + margin &&
                y >= obj.y - margin && y <= obj.y + obj.height + margin;
 
@@ -1291,6 +1591,94 @@ class HackerPad {
     this.updateStatus();
     this.updateLayers();
     this.render();
+  }
+
+  // ============================================
+  // MARQUEE SELECTION
+  // ============================================
+
+  drawMarqueeRect() {
+    const ctx = this.ctx;
+    ctx.save();
+    ctx.translate(this.offsetX, this.offsetY);
+    ctx.scale(this.scale, this.scale);
+
+    const x1 = Math.min(this.marqueeStart.x, this.marqueeCurrent.x);
+    const y1 = Math.min(this.marqueeStart.y, this.marqueeCurrent.y);
+    const w = Math.abs(this.marqueeCurrent.x - this.marqueeStart.x);
+    const h = Math.abs(this.marqueeCurrent.y - this.marqueeStart.y);
+
+    ctx.fillStyle = 'rgba(0, 255, 255, 0.08)';
+    ctx.fillRect(x1, y1, w, h);
+
+    ctx.strokeStyle = '#00ffff';
+    ctx.lineWidth = 1.5 / this.scale;
+    ctx.setLineDash([6 / this.scale, 4 / this.scale]);
+    ctx.strokeRect(x1, y1, w, h);
+
+    ctx.restore();
+  }
+
+  finalizeMarqueeSelection(e) {
+    const start = this.marqueeStart;
+    const end = this.marqueeCurrent;
+
+    this.isMarqueeSelecting = false;
+    this.marqueeStart = null;
+    this.marqueeCurrent = null;
+
+    if (!start || !end) { this.render(); return; }
+
+    // Only select if drag was > 5px to prevent accidental selection on click
+    const dragDist = Math.sqrt((end.x - start.x) ** 2 + (end.y - start.y) ** 2);
+    if (dragDist < 5) { this.render(); return; }
+
+    const selRect = {
+      x: Math.min(start.x, end.x),
+      y: Math.min(start.y, end.y),
+      width: Math.abs(end.x - start.x),
+      height: Math.abs(end.y - start.y)
+    };
+
+    const found = this.findObjectsInRect(selRect);
+
+    if (e.shiftKey) {
+      // Append to existing selection
+      found.forEach(obj => {
+        if (!this.selectedObjects.includes(obj)) {
+          this.selectedObjects.push(obj);
+        }
+      });
+    } else {
+      this.selectedObjects = found;
+    }
+
+    this.updateStatus();
+    this.updateLayers();
+    this.render();
+  }
+
+  findObjectsInRect(selRect) {
+    const result = [];
+    const childIds = new Set();
+    this.objects.forEach(obj => {
+      if (obj.type === 'group') obj.children.forEach(id => childIds.add(id));
+    });
+
+    for (const obj of this.objects) {
+      // Skip group children - select the parent group instead
+      if (childIds.has(obj.id)) continue;
+
+      const bounds = this.getObjectBounds(obj);
+      // AABB intersection test
+      if (bounds.x < selRect.x + selRect.width &&
+          bounds.x + bounds.width > selRect.x &&
+          bounds.y < selRect.y + selRect.height &&
+          bounds.y + bounds.height > selRect.y) {
+        result.push(obj);
+      }
+    }
+    return result;
   }
 
   deleteSelected() {
@@ -1714,6 +2102,102 @@ class HackerPad {
   }
 
   // ============================================
+  // SHAPE TOOL
+  // ============================================
+
+  drawShape(obj) {
+    const shapeDef = SHAPE_LIBRARY[obj.shapeType];
+    if (!shapeDef) return;
+
+    const ctx = this.ctx;
+    ctx.beginPath();
+    shapeDef.draw(ctx, obj.x, obj.y, obj.width, obj.height);
+
+    if (obj.fillEnabled) {
+      ctx.fillStyle = obj.fillColor;
+      ctx.fill();
+    }
+
+    ctx.strokeStyle = obj.strokeColor;
+    ctx.lineWidth = obj.strokeWidth;
+    ctx.stroke();
+  }
+
+  placeShape(canvasX, canvasY) {
+    const shapeType = this.pendingShapeType;
+    if (!shapeType) return;
+
+    const shapeDef = SHAPE_LIBRARY[shapeType];
+    if (!shapeDef) return;
+
+    const w = shapeDef.defaultWidth;
+    const h = shapeDef.defaultHeight;
+
+    const obj = {
+      type: 'shape',
+      shapeType: shapeType,
+      x: canvasX - w / 2,
+      y: canvasY - h / 2,
+      width: w,
+      height: h,
+      strokeColor: this.strokeColor,
+      fillColor: this.fillColor,
+      fillEnabled: this.fillEnabled,
+      strokeWidth: this.strokeWidth,
+      opacity: this.opacity
+    };
+
+    this.addObject(obj);
+    this.pendingShapeType = null;
+
+    // Auto-switch to select tool with the new shape selected
+    this.selectTool('select');
+    this.selectedObjects = [obj];
+    this.updateStatus();
+    this.updateLayers();
+    this.render();
+  }
+
+  showShapesPanel() {
+    const panel = document.getElementById('shapes-panel');
+    if (panel) {
+      panel.classList.add('visible');
+      this.shapePanelVisible = true;
+    }
+  }
+
+  hideShapesPanel() {
+    const panel = document.getElementById('shapes-panel');
+    if (panel) {
+      panel.classList.remove('visible');
+      this.shapePanelVisible = false;
+    }
+  }
+
+  bindShapesPanel() {
+    const panel = document.getElementById('shapes-panel');
+    if (!panel) return;
+
+    panel.querySelectorAll('.shape-btn').forEach(btn => {
+      btn.addEventListener('click', (e) => {
+        e.stopPropagation();
+        const shapeType = btn.dataset.shapeType;
+        this.pendingShapeType = shapeType;
+        this.hideShapesPanel();
+        this.canvas.style.cursor = 'crosshair';
+      });
+    });
+
+    // Close panel when clicking outside
+    document.addEventListener('mousedown', (e) => {
+      if (this.shapePanelVisible && !panel.contains(e.target)) {
+        if (e.target.closest('[data-tool="shape"]')) return;
+        this.hideShapesPanel();
+      }
+    });
+  }
+
+  // ============================================
   // IMAGE HANDLING (Browser-based, no server upload)
   // ============================================
 
@@ -1833,6 +2317,9 @@ class HackerPad {
         break;
       case 'group':
         this.drawGroup(obj);
+        break;
+      case 'shape':
+        this.drawShape(obj);
         break;
     }
 
@@ -2053,6 +2540,9 @@ class HackerPad {
         return { x: obj.x, y: obj.y, width: tWidth, height: tHeight };
 
       case 'image':
+        return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
+
+      case 'shape':
         return { x: obj.x, y: obj.y, width: obj.width, height: obj.height };
 
       case 'group': {
@@ -2788,7 +3278,8 @@ class HackerPad {
       text: 'A',
       image: '⌼',
       connector: '→',
-      group: '⊞'
+      group: '⊞',
+      shape: '⬡'
     };
 
     if (this.objects.length === 0) {
@@ -2875,7 +3366,7 @@ class HackerPad {
       item.innerHTML = `
         <div class="layer-header">
           <span class="layer-icon">${icons[obj.type] || '?'}</span>
-          <span class="layer-name">${obj.type.toUpperCase()} ${obj.id}</span>
+          <span class="layer-name">${obj.type === 'shape' ? (SHAPE_LIBRARY[obj.shapeType]?.name || 'SHAPE').toUpperCase() : obj.type.toUpperCase()} ${obj.id}</span>
           <div class="layer-actions">
             ${groupBtns}
             <button class="layer-action-btn focus-btn" title="Focus on object">◎</button>

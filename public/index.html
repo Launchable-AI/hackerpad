@@ -71,6 +71,11 @@
           <span class="label">CONNECT</span>
           <span class="hotkey">C</span>
         </button>
+        <button class="tool-btn" data-tool="shape" title="Shapes [P]">
+          <span class="icon">⬡</span>
+          <span class="label">SHAPES</span>
+          <span class="hotkey">P</span>
+        </button>
       </div>
 
       <div class="toolbar-section actions">
@@ -227,6 +232,11 @@
           <span class="radial-label">CONNECT</span>
           <span class="radial-key">C</span>
         </button>
+        <button class="radial-item" data-tool="shape" data-angle="355">
+          <span class="radial-icon">⬡</span>
+          <span class="radial-label">SHAPES</span>
+          <span class="radial-key">P</span>
+        </button>
         <button class="radial-item" data-action="lock-group" data-angle="360">
           <span class="radial-icon">🔒</span>
           <span class="radial-label">LOCK</span>
@@ -236,6 +246,54 @@
         <circle cx="250" cy="250" r="175" class="radial-ring-bg"/>
         <circle cx="250" cy="250" r="175" class="radial-ring-glow"/>
       </svg>
+    </div>
+
+    <!-- Shapes Panel -->
+    <div id="shapes-panel" class="shapes-panel">
+      <div class="shapes-panel-header">
+        <span class="shapes-panel-title">⬡ SHAPES</span>
+      </div>
+      <div class="shapes-panel-content">
+        <div class="shapes-category">
+          <span class="shapes-category-label">ARROWS</span>
+          <div class="shapes-grid">
+            <button class="shape-btn" data-shape-type="arrow-right" title="Arrow Right"><span>→</span><small>Arrow R</small></button>
+            <button class="shape-btn" data-shape-type="arrow-left" title="Arrow Left"><span>←</span><small>Arrow L</small></button>
+            <button class="shape-btn" data-shape-type="arrow-bidirectional" title="Bidirectional Arrow"><span>↔</span><small>Bidir</small></button>
+          </div>
+        </div>
+        <div class="shapes-category">
+          <span class="shapes-category-label">INFRASTRUCTURE</span>
+          <div class="shapes-grid">
+            <button class="shape-btn" data-shape-type="database" title="Database"><span>⛁</span><small>Database</small></button>
+            <button class="shape-btn" data-shape-type="server" title="Server"><span>▦</span><small>Server</small></button>
+            <button class="shape-btn" data-shape-type="cloud" title="Cloud"><span>☁</span><small>Cloud</small></button>
+          </div>
+        </div>
+        <div class="shapes-category">
+          <span class="shapes-category-label">DEVELOPMENT</span>
+          <div class="shapes-grid">
+            <button class="shape-btn" data-shape-type="terminal" title="Terminal"><span>&gt;_</span><small>Terminal</small></button>
+            <button class="shape-btn" data-shape-type="code-brackets" title="Code"><span>{ }</span><small>Code</small></button>
+            <button class="shape-btn" data-shape-type="api-box" title="API"><span>⬡</span><small>API</small></button>
+          </div>
+        </div>
+        <div class="shapes-category">
+          <span class="shapes-category-label">DEVICES</span>
+          <div class="shapes-grid">
+            <button class="shape-btn" data-shape-type="laptop" title="Laptop"><span>⊟</span><small>Laptop</small></button>
+            <button class="shape-btn" data-shape-type="monitor" title="Monitor"><span>⊞</span><small>Monitor</small></button>
+          </div>
+        </div>
+        <div class="shapes-category">
+          <span class="shapes-category-label">FLOWCHART</span>
+          <div class="shapes-grid">
+            <button class="shape-btn" data-shape-type="diamond" title="Decision (Diamond)"><span>◇</span><small>Decision</small></button>
+            <button class="shape-btn" data-shape-type="hexagon" title="Hexagon"><span>⬡</span><small>Hexagon</small></button>
+            <button class="shape-btn" data-shape-type="parallelogram" title="I/O (Parallelogram)"><span>▱</span><small>I/O</small></button>
+          </div>
+        </div>
+      </div>
     </div>
 
     <!-- Projects Dialog -->

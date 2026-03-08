@@ -1213,3 +1213,115 @@ input[type="range"]::-webkit-slider-thumb {
   text-align: center;
   letter-spacing: 0.3px;
 }
+
+/* ============================================
+   SHAPES PANEL
+   ============================================ */
+
+.shapes-panel {
+  display: none;
+  position: fixed;
+  top: 60px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--bg-secondary);
+  border: 1px solid var(--neon-green);
+  border-radius: 8px;
+  z-index: 200;
+  box-shadow: var(--glow-green), 0 10px 40px rgba(0, 0, 0, 0.5);
+  min-width: 320px;
+  max-width: 420px;
+}
+
+.shapes-panel.visible {
+  display: block;
+}
+
+.shapes-panel-header {
+  padding: 10px 16px;
+  background: var(--bg-tertiary);
+  border-bottom: 1px solid var(--border-color);
+  border-radius: 8px 8px 0 0;
+}
+
+.shapes-panel-title {
+  font-family: 'Orbitron', sans-serif;
+  font-size: 12px;
+  color: var(--neon-green);
+  text-shadow: var(--glow-green);
+  letter-spacing: 2px;
+}
+
+.shapes-panel-content {
+  padding: 12px;
+  max-height: 400px;
+  overflow-y: auto;
+}
+
+.shapes-category {
+  margin-bottom: 12px;
+}
+
+.shapes-category:last-child {
+  margin-bottom: 0;
+}
+
+.shapes-category-label {
+  display: block;
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+  padding-bottom: 4px;
+  border-bottom: 1px solid var(--border-color);
+}
+
+.shapes-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.shape-btn {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 10px 6px;
+  background: var(--bg-primary);
+  border: 1px solid var(--border-color);
+  border-radius: 6px;
+  color: var(--text-primary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: inherit;
+}
+
+.shape-btn span {
+  font-size: 22px;
+  line-height: 1;
+}
+
+.shape-btn small {
+  font-size: 9px;
+  color: var(--text-secondary);
+  letter-spacing: 0.5px;
+}
+
+.shape-btn:hover {
+  border-color: var(--neon-cyan);
+  color: var(--neon-cyan);
+  background: rgba(0, 255, 255, 0.08);
+  box-shadow: 0 0 10px rgba(0, 255, 255, 0.2);
+}
+
+.shape-btn:hover small {
+  color: var(--neon-cyan);
+}
+
+.shape-btn:active {
+  transform: scale(0.95);
+  background: rgba(0, 255, 157, 0.15);
+  border-color: var(--neon-green);
+  color: var(--neon-green);
+}

@@ -18,10 +18,12 @@ https://github.com/user-attachments/assets/22dbc984-a18c-4719-9208-51f1fe7bae2d
 - **Text (T)** - Add text with multiline support
 - **Image (I)** - Import images (also supports Ctrl+V paste from clipboard)
 - **Connect (C)** - Create connectors between objects
+- **Shapes (P)** - Place pre-built shapes (arrows, database, server, terminal, flowchart, etc.)
 
 ### Object Manipulation
 - **Move** - Click and drag any selected object to reposition it (works for all object types)
-- **Resize** - Drag corner handles to resize rectangles, images, ellipses, text, and groups
+- **Resize** - Drag corner handles to resize rectangles, images, ellipses, text, groups, and shapes
+- **Marquee select** - Click and drag on empty canvas to rubber-band select multiple objects. Shift+drag to add to selection
 - **Multi-select** - Shift+click to select multiple objects, then move them together
 - **Group** - Select 2+ objects and press Ctrl+G to group them. Groups act as a single unit for moving, resizing, and duplicating
 - **Ungroup** - Select a group and press Ctrl+Shift+G to dissolve it back into individual objects
@@ -60,6 +62,7 @@ https://github.com/user-attachments/assets/22dbc984-a18c-4719-9208-51f1fe7bae2d
 | T | Text tool |
 | I | Image tool |
 | C | Connect tool |
+| P | Shapes tool |
 | Ctrl+C | Copy selected objects |
 | Ctrl+V | Paste (system clipboard images or copied objects) |
 | Ctrl+D | Duplicate selected objects |
